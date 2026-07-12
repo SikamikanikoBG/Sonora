@@ -18,8 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
-import androidx.compose.material.icons.automirrored.filled.PlaylistRemove
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -282,7 +282,7 @@ private fun SongMenu(starred: Boolean, actions: SongRowActions) {
             actions.onRemove?.let { rm ->
                 DropdownMenuItem(
                     text = { Text(actions.removeLabel) },
-                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistRemove, null) },
+                    leadingIcon = { Icon(Icons.Filled.Delete, null) },
                     onClick = { open = false; rm() }
                 )
             }
