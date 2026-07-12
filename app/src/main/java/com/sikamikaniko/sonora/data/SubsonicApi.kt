@@ -32,7 +32,17 @@ interface SubsonicApi {
     @GET("updatePlaylist.view")
     suspend fun updatePlaylist(
         @Query("playlistId") playlistId: String,
-        @Query("songIdToAdd") songIdToAdd: List<String>? = null
+        @Query("songIdToAdd") songIdToAdd: List<String>? = null,
+        @Query("songIndexToRemove") songIndexToRemove: List<Int>? = null
+    ): SubsonicEnvelope
+
+    @GET("deletePlaylist.view")
+    suspend fun deletePlaylist(@Query("id") id: String): SubsonicEnvelope
+
+    @GET("getLyrics.view")
+    suspend fun getLyrics(
+        @Query("artist") artist: String?,
+        @Query("title") title: String?
     ): SubsonicEnvelope
 
     @GET("getAlbum.view")

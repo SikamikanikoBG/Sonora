@@ -3,6 +3,7 @@ package com.sikamikaniko.sonora.ui
 import android.app.Application
 import android.content.ComponentName
 import android.net.Uri
+import android.os.Bundle
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -159,11 +160,26 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     val shuffle: StateFlow<Boolean> = _shuffle.asStateFlow()
     private val _queue = MutableStateFlow<List<QueueItem>>(emptyList())
     val queue: StateFlow<List<QueueItem>> = _queue.asStateFlow()
+    private val _speed = MutableStateFlow(1f)
+    val speed: StateFlow<Float> = _speed.asStateFlow()
+    private val _currentAlbumId = MutableStateFlow<String?>(null)
+    val currentAlbumId: StateFlow<String?> = _currentAlbumId.asStateFlow()
+    private val _currentArtistId = MutableStateFlow<String?>(null)
+    val currentArtistId: StateFlow<String?> = _currentArtistId.asStateFlow()
+
+    // ---- Lyrics ----
+    private val _lyrics = MutableStateFlow<String?>(null)
+    val lyrics: StateFlow<String?> = _lyrics.asStateFlow()
+    private val _lyricsLoading = MutableStateFlow(false)
+    val lyricsLoading: StateFlow<Boolean> = _lyricsLoading.asStateFlow()
 
     // ---- Sleep timer ----
     private var sleepJob: Job? = null
+    private var pauseAfterTrack = false
     private val _sleepMinutesLeft = MutableStateFlow(0)
     val sleepMinutesLeft: StateFlow<Int> = _sleepMinutesLeft.asStateFlow()
+    private val _sleepEndOfTrack = MutableStateFlow(false)
+    val sleepEndOfTrack: StateFlow<Boolean> = _sleepEndOfTrack.asStateFlow()
 
     // ---- Self-update ----
     private val _update = MutableStateFlow<Updater.UpdateInfo?>(null)
@@ -175,6 +191,11 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         override fun onIsPlayingChanged(isPlaying: Boolean) { _isPlaying.value = isPlaying }
         override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) { updateNowPlaying() }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (pauseAfterTrack && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                controller?.pause()
+                pauseAfterTrack = false
+                _sleepEndOfTrack.value = false
+            }
             updateNowPlaying()
             rebuildQueue()
             mediaItem?.mediaId?.let { scrobble(it) }
@@ -183,6 +204,9 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             rebuildQueue()
         }
         override fun onPlaybackStateChanged(playbackState: Int) { updateNowPlaying() }
+        override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+            _speed.value = playbackParameters.speed
+        }
         override fun onRepeatModeChanged(repeatMode: Int) { _repeatMode.value = repeatMode }
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
             _shuffle.value = shuffleModeEnabled
@@ -250,6 +274,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _isPlaying.value = c.isPlaying
         _repeatMode.value = c.repeatMode
         _shuffle.value = c.shuffleModeEnabled
+        _speed.value = c.playbackParameters.speed
+        val extras = md.extras
+        _currentAlbumId.value = extras?.getString("albumId")
+        _currentArtistId.value = extras?.getString("artistId")
         val d = c.duration
         _duration.value = if (d > 0) d else 0
     }
@@ -607,8 +635,58 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun sleepAtEndOfTrack() {
+        sleepJob?.cancel(); sleepJob = null; _sleepMinutesLeft.value = 0
+        pauseAfterTrack = true
+        _sleepEndOfTrack.value = true
+    }
+
     fun cancelSleepTimer() {
         sleepJob?.cancel(); sleepJob = null; _sleepMinutesLeft.value = 0
+        pauseAfterTrack = false
+        _sleepEndOfTrack.value = false
+    }
+
+    // ---- Playback speed ----
+    fun setSpeed(value: Float) {
+        controller?.setPlaybackSpeed(value)
+        _speed.value = value
+    }
+
+    // ---- Queue reorder ----
+    fun moveQueueUp(index: Int) {
+        val c = controller ?: return
+        if (index > 0) { c.moveMediaItem(index, index - 1); rebuildQueue() }
+    }
+    fun moveQueueDown(index: Int) {
+        val c = controller ?: return
+        if (index < c.mediaItemCount - 1) { c.moveMediaItem(index, index + 1); rebuildQueue() }
+    }
+
+    // ---- Lyrics ----
+    fun loadLyrics() = viewModelScope.launch {
+        _lyricsLoading.value = true
+        _lyrics.value = try {
+            Subsonic.api?.getLyrics(_artist.value, _title.value)?.response?.lyrics?.value
+        } catch (_: Exception) { null }
+        _lyricsLoading.value = false
+    }
+
+    // ---- Playlist management ----
+    fun deletePlaylist(id: String) = viewModelScope.launch {
+        try {
+            Subsonic.api?.deletePlaylist(id)
+            _currentPlaylist.value = null
+            loadPlaylists()
+            _toast.value = "Playlist deleted"
+        } catch (_: Exception) { _error.value = "Could not delete playlist" }
+    }
+
+    fun removeFromPlaylist(playlistId: String, index: Int) = viewModelScope.launch {
+        try {
+            Subsonic.api?.updatePlaylist(playlistId, null, listOf(index))
+            _currentPlaylist.value = Subsonic.api?.getPlaylist(playlistId)?.response?.playlist
+        } catch (_: Exception) { _error.value = "Could not remove song" }
     }
 
     private fun scrobble(id: String) {
@@ -620,10 +698,15 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun clearPlaylist() { _currentPlaylist.value = null }
 
     private fun toMediaItem(song: Song): MediaItem {
+        val extras = Bundle().apply {
+            song.albumId?.let { putString("albumId", it) }
+            song.artistId?.let { putString("artistId", it) }
+        }
         val meta = MediaMetadata.Builder()
             .setTitle(song.title ?: "Unknown")
             .setArtist(song.artist ?: "Unknown artist")
             .setAlbumTitle(song.album)
+            .setExtras(extras)
             .apply { Subsonic.coverArtUrl(song.coverArt, 512)?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
         return MediaItem.Builder()

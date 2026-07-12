@@ -59,6 +59,7 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     val snackbar = remember { SnackbarHostState() }
     var showPlayer by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
+    var showLyrics by remember { mutableStateOf(false) }
     val tabs = listOf(Tab.Home, Tab.Library, Tab.Search, Tab.Playlists)
     val selCount = if (selMode == SelMode.SONGS) selectedSongs.size else selectedAlbums.size
 
@@ -115,13 +116,24 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     }
 
     if (showPlayer && hasCurrent) {
-        NowPlayingScreen(vm, onBack = { showPlayer = false }, onOpenQueue = { showQueue = true })
+        NowPlayingScreen(
+            vm,
+            onBack = { showPlayer = false },
+            onOpenQueue = { showQueue = true },
+            onOpenLyrics = { showLyrics = true },
+            onGoToAlbum = { id -> showPlayer = false; nav.navigate("album/$id") },
+            onGoToArtist = { id -> showPlayer = false; nav.navigate("artist/$id") }
+        )
     }
     if (showQueue) {
         QueueScreen(vm, onBack = { showQueue = false })
     }
-    BackHandler(enabled = showPlayer || showQueue || selMode != SelMode.NONE) {
+    if (showLyrics) {
+        LyricsScreen(vm, onBack = { showLyrics = false })
+    }
+    BackHandler(enabled = showPlayer || showQueue || showLyrics || selMode != SelMode.NONE) {
         when {
+            showLyrics -> showLyrics = false
             showQueue -> showQueue = false
             showPlayer -> showPlayer = false
             selMode != SelMode.NONE -> vm.clearSelection()

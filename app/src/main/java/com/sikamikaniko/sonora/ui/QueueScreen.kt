@@ -14,7 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,10 +71,13 @@ fun QueueScreen(vm: SonoraViewModel, onBack: () -> Unit) {
                             )
                             Text(item.artist, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        if (item.isCurrent) {
-                            Icon(Icons.Filled.VolumeUp, null, tint = MaterialTheme.colorScheme.primary)
+                        IconButton(onClick = { vm.moveQueueUp(item.index) }, modifier = Modifier.size(38.dp)) {
+                            Icon(Icons.Filled.KeyboardArrowUp, "Move up", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        IconButton(onClick = { vm.removeFromQueue(item.index) }) {
+                        IconButton(onClick = { vm.moveQueueDown(item.index) }, modifier = Modifier.size(38.dp)) {
+                            Icon(Icons.Filled.KeyboardArrowDown, "Move down", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = { vm.removeFromQueue(item.index) }, modifier = Modifier.size(38.dp)) {
                             Icon(Icons.Filled.Close, "Remove", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }

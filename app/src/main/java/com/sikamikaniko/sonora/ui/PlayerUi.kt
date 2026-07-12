@@ -21,6 +21,10 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Lyrics
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
@@ -35,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -79,7 +84,14 @@ fun MiniPlayer(vm: SonoraViewModel, onExpand: () -> Unit) {
 }
 
 @Composable
-fun NowPlayingScreen(vm: SonoraViewModel, onBack: () -> Unit, onOpenQueue: () -> Unit) {
+fun NowPlayingScreen(
+    vm: SonoraViewModel,
+    onBack: () -> Unit,
+    onOpenQueue: () -> Unit,
+    onOpenLyrics: () -> Unit,
+    onGoToAlbum: (String) -> Unit,
+    onGoToArtist: (String) -> Unit
+) {
     val title by vm.title.collectAsState()
     val artist by vm.artist.collectAsState()
     val artwork by vm.artworkUri.collectAsState()
@@ -91,6 +103,10 @@ fun NowPlayingScreen(vm: SonoraViewModel, onBack: () -> Unit, onOpenQueue: () ->
     val mediaId by vm.currentMediaId.collectAsState()
     val starredIds by vm.starredIds.collectAsState()
     val sleepLeft by vm.sleepMinutesLeft.collectAsState()
+    val sleepEnd by vm.sleepEndOfTrack.collectAsState()
+    val speed by vm.speed.collectAsState()
+    val albumId by vm.currentAlbumId.collectAsState()
+    val artistId by vm.currentArtistId.collectAsState()
 
     val isStarred = mediaId != null && starredIds.contains(mediaId)
     var dragging by remember { mutableStateOf(false) }
@@ -107,7 +123,20 @@ fun NowPlayingScreen(vm: SonoraViewModel, onBack: () -> Unit, onOpenQueue: () ->
                 Spacer(Modifier.weight(1f))
                 Text("Now Playing", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.weight(1f))
-                SleepMenu(sleepLeft, onPick = { vm.startSleepTimer(it) }, onCancel = { vm.cancelSleepTimer() })
+                SpeedMenu(speed) { vm.setSpeed(it) }
+                SleepMenu(
+                    sleepLeft, sleepEnd,
+                    onPick = { vm.startSleepTimer(it) },
+                    onEndOfTrack = { vm.sleepAtEndOfTrack() },
+                    onCancel = { vm.cancelSleepTimer() }
+                )
+                NpOverflow(
+                    hasAlbum = albumId != null,
+                    hasArtist = artistId != null,
+                    onLyrics = onOpenLyrics,
+                    onGoAlbum = { albumId?.let(onGoToAlbum) },
+                    onGoArtist = { artistId?.let(onGoToArtist) }
+                )
             }
 
             Spacer(Modifier.height(20.dp))
@@ -201,19 +230,61 @@ private fun Backdrop(artwork: String?) {
 }
 
 @Composable
-private fun SleepMenu(minutesLeft: Int, onPick: (Int) -> Unit, onCancel: () -> Unit) {
+private fun SleepMenu(
+    minutesLeft: Int,
+    endActive: Boolean,
+    onPick: (Int) -> Unit,
+    onEndOfTrack: () -> Unit,
+    onCancel: () -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
+    val active = minutesLeft > 0 || endActive
     Box {
         IconButton(onClick = { expanded = true }) {
-            Icon(Icons.Filled.Timer, "Sleep timer", tint = if (minutesLeft > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(Icons.Filled.Timer, "Sleep timer", tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("End of track") }, onClick = { onEndOfTrack(); expanded = false })
             listOf(15, 30, 45, 60).forEach { m ->
                 DropdownMenuItem(text = { Text("$m minutes") }, onClick = { onPick(m); expanded = false })
             }
-            if (minutesLeft > 0) {
+            if (active) {
                 DropdownMenuItem(text = { Text("Cancel timer") }, onClick = { onCancel(); expanded = false })
             }
+        }
+    }
+}
+
+@Composable
+private fun SpeedMenu(speed: Float, onPick: (Float) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val label = if (speed % 1f == 0f) "${speed.toInt()}×" else "$speed×"
+    Box {
+        TextButton(onClick = { expanded = true }) { Text(label) }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { s ->
+                val l = if (s % 1f == 0f) "${s.toInt()}×" else "$s×"
+                DropdownMenuItem(text = { Text(l) }, onClick = { onPick(s); expanded = false })
+            }
+        }
+    }
+}
+
+@Composable
+private fun NpOverflow(
+    hasAlbum: Boolean,
+    hasArtist: Boolean,
+    onLyrics: () -> Unit,
+    onGoAlbum: () -> Unit,
+    onGoArtist: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) { Icon(Icons.Filled.MoreVert, "More") }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("Lyrics") }, leadingIcon = { Icon(Icons.Filled.Lyrics, null) }, onClick = { expanded = false; onLyrics() })
+            if (hasAlbum) DropdownMenuItem(text = { Text("Go to album") }, leadingIcon = { Icon(Icons.Filled.Album, null) }, onClick = { expanded = false; onGoAlbum() })
+            if (hasArtist) DropdownMenuItem(text = { Text("Go to artist") }, leadingIcon = { Icon(Icons.Filled.Person, null) }, onClick = { expanded = false; onGoArtist() })
         }
     }
 }

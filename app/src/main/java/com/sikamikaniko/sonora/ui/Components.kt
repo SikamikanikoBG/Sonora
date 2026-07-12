@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
+import androidx.compose.material.icons.automirrored.filled.PlaylistRemove
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.CheckCircle
@@ -183,7 +184,9 @@ data class SongRowActions(
     val onAddToPlaylist: () -> Unit,
     val onGoToArtist: (() -> Unit)?,
     val onGoToAlbum: (() -> Unit)?,
-    val onToggleStar: () -> Unit
+    val onToggleStar: () -> Unit,
+    val onRemove: (() -> Unit)? = null,
+    val removeLabel: String = "Remove"
 )
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -276,12 +279,28 @@ private fun SongMenu(starred: Boolean, actions: SongRowActions) {
                     onClick = { open = false; go() }
                 )
             }
+            actions.onRemove?.let { rm ->
+                DropdownMenuItem(
+                    text = { Text(actions.removeLabel) },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistRemove, null) },
+                    onClick = { open = false; rm() }
+                )
+            }
         }
     }
 }
 
 @Composable
-fun SongItem(vm: SonoraViewModel, nav: NavController, song: Song, songs: List<Song>, index: Int, showIndex: Boolean) {
+fun SongItem(
+    vm: SonoraViewModel,
+    nav: NavController,
+    song: Song,
+    songs: List<Song>,
+    index: Int,
+    showIndex: Boolean,
+    onRemove: (() -> Unit)? = null,
+    removeLabel: String = "Remove"
+) {
     val selMode by vm.selMode.collectAsState()
     val selectedSongs by vm.selectedSongs.collectAsState()
     val starredIds by vm.starredIds.collectAsState()
@@ -299,7 +318,9 @@ fun SongItem(vm: SonoraViewModel, nav: NavController, song: Song, songs: List<So
             onAddToPlaylist = { vm.openPlaylistPicker(listOf(song)) },
             onGoToArtist = song.artistId?.let { aid -> { nav.navigate("artist/$aid") } },
             onGoToAlbum = song.albumId?.let { alid -> { nav.navigate("album/$alid") } },
-            onToggleStar = { vm.toggleStar(song.id) }
+            onToggleStar = { vm.toggleStar(song.id) },
+            onRemove = onRemove,
+            removeLabel = removeLabel
         ),
         onClick = { if (active) vm.toggleSongSelection(song) else vm.playSongs(songs, index) },
         onLongClick = { vm.toggleSongSelection(song) }
