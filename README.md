@@ -1,17 +1,32 @@
+<p align="center">
+  <img src="branding/sonora-logo.svg" alt="Sonora" width="420">
+</p>
+
 # Sonora
 
 A clean, native Android music player for your own **Subsonic / Navidrome** server. Your music lives on your server; Sonora streams it to your phone from anywhere.
 
 Built with Kotlin, Jetpack Compose (Material 3) and Media3/ExoPlayer.
 
-## Features (MVP)
+## Features
 
 - **Connect to any Subsonic-compatible server** (Navidrome, Airsonic, Gonic, …) with URL + username + password (token auth, password never sent in the clear).
-- **Browse your library** as an album grid with cover art.
-- **Search** songs, albums and artists.
-- **Album view** with play and shuffle.
-- **Full-screen now-playing** with seek bar, plus a persistent mini-player.
+- **Bottom-nav app** — Home, Library, Search, Playlists.
+- **Home** browse rails: Recently added, Recently played, Most played, Discover.
+- **Library** tabs: Albums grid, Artists, Favourites.
+- **Super-easy search** across artists, albums and songs, with instant results.
+- **Artist pages** and **album pages** with play / shuffle.
+- **Playlists** — browse and play your server playlists.
+- **Favourites** — heart any song or album (synced to the server via star/unstar).
+- **Play queue** — see what's up next and jump to any track.
+- **Full player** — shuffle, repeat (off/all/one), seek, favourite, sleep timer.
 - **Background playback** with lock-screen / notification controls and a proper media session (headset buttons, "audio becoming noisy" pause, audio focus).
+- **Smart caching** — streamed audio is cached (up to 1 GB), so replays are instant and recently played music survives a flaky connection.
+
+## Publishing to Google Play
+
+See **[PLAY_PUBLISHING.md](PLAY_PUBLISHING.md)** — the project already builds a signed
+`.aab` via the `Play Release (AAB)` workflow; you just add a signing key and store listing.
 
 ## Install
 

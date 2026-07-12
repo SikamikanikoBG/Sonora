@@ -11,5 +11,8 @@ local.properties
 app/build/
 build/
 *.apk
+*.aab
 *.keystore
+*.jks
+keystore.properties
 !gradle/wrapper/gradle-wrapper.jar
