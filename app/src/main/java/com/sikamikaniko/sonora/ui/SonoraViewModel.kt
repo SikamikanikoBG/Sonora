@@ -21,6 +21,7 @@ import com.sikamikaniko.sonora.data.ArtPalette
 import com.sikamikaniko.sonora.data.Artist
 import com.sikamikaniko.sonora.data.ArtistWithAlbums
 import com.sikamikaniko.sonora.data.Genre
+import com.sikamikaniko.sonora.data.LocalMedia
 import com.sikamikaniko.sonora.data.OnlineLyrics
 import com.sikamikaniko.sonora.data.Playlist
 import com.sikamikaniko.sonora.data.PlaylistWithSongs
@@ -119,6 +120,18 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
                 Brush.linearGradient(listOf(Color(it.first), Color(it.second)))
             }
         }
+    }
+
+    // ---- Local device library ----
+    private val _localSongs = MutableStateFlow<List<Song>>(emptyList())
+    val localSongs: StateFlow<List<Song>> = _localSongs.asStateFlow()
+    private val _scanning = MutableStateFlow(false)
+    val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
+
+    fun scanDevice() = viewModelScope.launch {
+        _scanning.value = true
+        _localSongs.value = try { LocalMedia.scan(getApplication<Application>()) } catch (_: Exception) { emptyList() }
+        _scanning.value = false
     }
 
     private val _cacheBytes = MutableStateFlow(0L)
@@ -746,6 +759,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun scrobble(id: String) {
+        if (id.startsWith("local:")) return
         viewModelScope.launch { try { Subsonic.api?.scrobble(id) } catch (_: Exception) { } }
     }
 
@@ -754,20 +768,24 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun clearPlaylist() { _currentPlaylist.value = null }
 
     private fun toMediaItem(song: Song): MediaItem {
+        val isLocal = song.localUri != null
         val extras = Bundle().apply {
-            song.albumId?.let { putString("albumId", it) }
-            song.artistId?.let { putString("artistId", it) }
+            if (!isLocal) {
+                song.albumId?.let { putString("albumId", it) }
+                song.artistId?.let { putString("artistId", it) }
+            }
         }
+        val artUrl = song.artUri ?: Subsonic.coverArtUrl(song.coverArt, 512)
         val meta = MediaMetadata.Builder()
             .setTitle(song.title ?: "Unknown")
             .setArtist(song.artist ?: "Unknown artist")
             .setAlbumTitle(song.album)
             .setExtras(extras)
-            .apply { Subsonic.coverArtUrl(song.coverArt, 512)?.let { setArtworkUri(Uri.parse(it)) } }
+            .apply { artUrl?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
         return MediaItem.Builder()
             .setMediaId(song.id)
-            .setUri(Subsonic.streamUrl(song.id))
+            .setUri(song.localUri ?: Subsonic.streamUrl(song.id))
             .setMediaMetadata(meta)
             .build()
     }

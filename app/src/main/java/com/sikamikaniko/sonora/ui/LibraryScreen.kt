@@ -73,7 +73,7 @@ private val SORTS = listOf(
 @Composable
 fun LibraryScreen(vm: SonoraViewModel, nav: NavController) {
     var tab by remember { mutableIntStateOf(0) }
-    val titles = listOf("Albums", "Artists", "Genres", "Favourites")
+    val titles = listOf("Albums", "Artists", "Genres", "Favourites", "Device")
 
     Column(
         Modifier
@@ -98,7 +98,8 @@ fun LibraryScreen(vm: SonoraViewModel, nav: NavController) {
                 0 -> AlbumsTab(vm, nav)
                 1 -> ArtistsTab(vm, nav)
                 2 -> GenresTab(vm, nav)
-                else -> FavouritesTab(vm, nav)
+                3 -> FavouritesTab(vm, nav)
+                else -> DeviceTab(vm)
             }
         }
     }

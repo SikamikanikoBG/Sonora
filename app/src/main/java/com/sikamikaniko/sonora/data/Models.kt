@@ -122,5 +122,8 @@ data class Song(
     val year: Int? = null,
     val starred: String? = null,
     val contentType: String? = null,
-    val suffix: String? = null
+    val suffix: String? = null,
+    // Local (device) playback — set for MediaStore songs, null for server songs.
+    val localUri: String? = null,
+    val artUri: String? = null
 )
