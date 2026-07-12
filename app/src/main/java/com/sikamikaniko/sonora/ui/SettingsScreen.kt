@@ -112,6 +112,19 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                     current = currentTheme,
                     onPick = { vm.setTheme(it) }
                 )
+                Spacer(Modifier.height(14.dp))
+                val artTheme by vm.artTheme.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Colour from album art")
+                        Text(
+                            "Now Playing tints itself to the current cover",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    androidx.compose.material3.Switch(checked = artTheme, onCheckedChange = { vm.setArtTheme(it) })
+                }
             }
 
             // ---- Storage ----

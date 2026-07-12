@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
@@ -77,12 +79,15 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
 import coil.compose.SubcomposeAsyncImage
+import java.net.URLEncoder
 
 // ---------------------------------------------------------------------------
 // Mini player — a tactile bar that floats above the nav, with a live progress
@@ -199,8 +204,10 @@ fun NowPlayingScreen(
     val albumId by vm.currentAlbumId.collectAsState()
     val artistId by vm.currentArtistId.collectAsState()
 
-    val brand = LocalBrandBrush.current
+    val artBrush by vm.artBrush.collectAsState()
+    val brand = artBrush ?: LocalBrandBrush.current
     val haptics = LocalHapticFeedback.current
+    val uriHandler = LocalUriHandler.current
 
     val isStarred = mediaId != null && starredIds.contains(mediaId)
     var dragging by remember { mutableStateOf(false) }
@@ -243,6 +250,10 @@ fun NowPlayingScreen(
                     hasAlbum = albumId != null,
                     hasArtist = artistId != null,
                     onLyrics = onOpenLyrics,
+                    onChords = {
+                        val q = URLEncoder.encode("${artist ?: ""} ${title ?: ""} chords", "UTF-8")
+                        uriHandler.openUri("https://www.google.com/search?q=$q")
+                    },
                     onGoAlbum = { albumId?.let(onGoToAlbum) },
                     onGoArtist = { artistId?.let(onGoToArtist) }
                 )
@@ -250,7 +261,17 @@ fun NowPlayingScreen(
 
             Spacer(Modifier.height(28.dp))
             Box(
-                Modifier.fillMaxWidth().aspectRatio(1f).padding(horizontal = 6.dp),
+                Modifier.fillMaxWidth().aspectRatio(1f).padding(horizontal = 6.dp)
+                    .pointerInput(Unit) {
+                        var total = 0f
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                if (total < -80f) vm.next() else if (total > 80f) vm.previous()
+                                total = 0f
+                            },
+                            onHorizontalDrag = { _, dx -> total += dx }
+                        )
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Surface(
@@ -504,6 +525,7 @@ private fun NpOverflow(
     hasAlbum: Boolean,
     hasArtist: Boolean,
     onLyrics: () -> Unit,
+    onChords: () -> Unit,
     onGoAlbum: () -> Unit,
     onGoArtist: () -> Unit
 ) {
@@ -512,6 +534,7 @@ private fun NpOverflow(
         IconButton(onClick = { expanded = true }) { Icon(Icons.Filled.MoreVert, "More") }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("Lyrics") }, leadingIcon = { Icon(Icons.Filled.Lyrics, null) }, onClick = { expanded = false; onLyrics() })
+            DropdownMenuItem(text = { Text("Guitar chords") }, leadingIcon = { Icon(Icons.Filled.MusicNote, null) }, onClick = { expanded = false; onChords() })
             if (hasAlbum) DropdownMenuItem(text = { Text("Go to album") }, leadingIcon = { Icon(Icons.Filled.Album, null) }, onClick = { expanded = false; onGoAlbum() })
             if (hasArtist) DropdownMenuItem(text = { Text("Go to artist") }, leadingIcon = { Icon(Icons.Filled.Person, null) }, onClick = { expanded = false; onGoArtist() })
         }

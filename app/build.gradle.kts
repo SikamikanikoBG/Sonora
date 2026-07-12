@@ -24,8 +24,8 @@ android {
         applicationId = "com.sikamikaniko.sonora"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.0.0"
+        versionCode = 8
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -110,8 +110,9 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // Image loading
+    // Image loading + colour extraction
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("androidx.palette:palette-ktx:1.0.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

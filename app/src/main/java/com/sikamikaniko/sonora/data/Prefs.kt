@@ -22,6 +22,10 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("dynamicColor", false)
         set(v) = sp.edit().putBoolean("dynamicColor", v).apply()
 
+    var artTheme: Boolean
+        get() = sp.getBoolean("artTheme", true)
+        set(v) = sp.edit().putBoolean("artTheme", v).apply()
+
     /** Selected Aurora theme, stored by AppTheme.name (default "MIDNIGHT"). */
     var themeName: String
         get() = sp.getString("themeName", "MIDNIGHT") ?: "MIDNIGHT"

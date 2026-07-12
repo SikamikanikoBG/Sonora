@@ -13,11 +13,15 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.sikamikaniko.sonora.BuildConfig
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import com.sikamikaniko.sonora.data.Album
 import com.sikamikaniko.sonora.data.AlbumWithSongs
+import com.sikamikaniko.sonora.data.ArtPalette
 import com.sikamikaniko.sonora.data.Artist
 import com.sikamikaniko.sonora.data.ArtistWithAlbums
 import com.sikamikaniko.sonora.data.Genre
+import com.sikamikaniko.sonora.data.OnlineLyrics
 import com.sikamikaniko.sonora.data.Playlist
 import com.sikamikaniko.sonora.data.PlaylistWithSongs
 import com.sikamikaniko.sonora.data.Prefs
@@ -91,6 +95,31 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     )
     val appTheme: StateFlow<AppTheme> = _appTheme.asStateFlow()
     fun setTheme(t: AppTheme) { prefs.themeName = t.name; _appTheme.value = t }
+
+    // Album-art auto theming
+    private val _artTheme = MutableStateFlow(prefs.artTheme)
+    val artTheme: StateFlow<Boolean> = _artTheme.asStateFlow()
+    private val _artBrush = MutableStateFlow<Brush?>(null)
+    val artBrush: StateFlow<Brush?> = _artBrush.asStateFlow()
+    private val _albumTitle = MutableStateFlow<String?>(null)
+    private var lastArtUrl: String? = null
+
+    fun setArtTheme(v: Boolean) {
+        prefs.artTheme = v
+        _artTheme.value = v
+        if (!v) _artBrush.value = null
+        else extractArtColors(_artworkUri.value)
+    }
+
+    private fun extractArtColors(url: String?) {
+        if (!_artTheme.value) { _artBrush.value = null; return }
+        viewModelScope.launch {
+            val pair = ArtPalette.colors(getApplication<Application>(), url)
+            _artBrush.value = pair?.let {
+                Brush.linearGradient(listOf(Color(it.first), Color(it.second)))
+            }
+        }
+    }
 
     private val _cacheBytes = MutableStateFlow(0L)
     val cacheBytes: StateFlow<Long> = _cacheBytes.asStateFlow()
@@ -275,7 +304,13 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val md = c.mediaMetadata
         _title.value = md.title?.toString()
         _artist.value = md.artist?.toString()
-        _artworkUri.value = md.artworkUri?.toString()
+        _albumTitle.value = md.albumTitle?.toString()
+        val art = md.artworkUri?.toString()
+        _artworkUri.value = art
+        if (art != lastArtUrl) {
+            lastArtUrl = art
+            extractArtColors(art)
+        }
         _currentMediaId.value = c.currentMediaItem?.mediaId
         _hasCurrent.value = c.currentMediaItem != null
         _isPlaying.value = c.isPlaying
@@ -669,13 +704,27 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val c = controller ?: return
         if (index < c.mediaItemCount - 1) { c.moveMediaItem(index, index + 1); rebuildQueue() }
     }
+    fun moveQueueBy(from: Int, steps: Int) {
+        val c = controller ?: return
+        if (steps == 0) return
+        val to = (from + steps).coerceIn(0, c.mediaItemCount - 1)
+        if (to != from) { c.moveMediaItem(from, to); rebuildQueue() }
+    }
 
     // ---- Lyrics ----
     fun loadLyrics() = viewModelScope.launch {
         _lyricsLoading.value = true
-        _lyrics.value = try {
+        // 1) try the music server
+        var text = try {
             Subsonic.api?.getLyrics(_artist.value, _title.value)?.response?.lyrics?.value
         } catch (_: Exception) { null }
+        // 2) fall back to lrclib.net (most self-hosted libraries have no lyrics)
+        if (text.isNullOrBlank()) {
+            text = OnlineLyrics.fetch(
+                _artist.value, _title.value, _albumTitle.value, (_duration.value / 1000).toInt()
+            )
+        }
+        _lyrics.value = text
         _lyricsLoading.value = false
     }
 
