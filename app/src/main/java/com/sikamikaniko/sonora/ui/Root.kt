@@ -43,6 +43,7 @@ private sealed class Tab(val route: String, val label: String, val icon: ImageVe
 @Composable
 fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     UpdateDialog(vm)
+    PlaylistPickerDialog(vm)
     val loggedIn by vm.loggedIn.collectAsState()
     if (!loggedIn) {
         LoginScreen(vm)
@@ -106,6 +107,10 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             composable("playlist/{id}") { entry ->
                 PlaylistScreen(vm, entry.arguments?.getString("id") ?: "", nav)
             }
+            composable("genre/{name}") { entry ->
+                GenreScreen(vm, entry.arguments?.getString("name") ?: "", nav)
+            }
+            composable("settings") { SettingsScreen(vm, nav) }
         }
     }
 

@@ -1,5 +1,6 @@
 package com.sikamikaniko.sonora.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,10 +44,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
+import coil.compose.SubcomposeAsyncImage
 
 @Composable
 fun MiniPlayer(vm: SonoraViewModel, onExpand: () -> Unit) {
@@ -95,6 +99,8 @@ fun NowPlayingScreen(vm: SonoraViewModel, onBack: () -> Unit, onOpenQueue: () ->
     val sliderValue = (if (dragging) dragPos else position.toFloat()).coerceIn(0f, sliderMax)
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+      Box(Modifier.fillMaxSize()) {
+        Backdrop(artwork)
         Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.Filled.KeyboardArrowDown, "Collapse") }
@@ -178,7 +184,20 @@ fun NowPlayingScreen(vm: SonoraViewModel, onBack: () -> Unit, onOpenQueue: () ->
                 Text("Sleep in $sleepLeft min", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
         }
+      }
     }
+}
+
+@Composable
+private fun Backdrop(artwork: String?) {
+    if (artwork.isNullOrBlank()) return
+    SubcomposeAsyncImage(
+        model = artwork,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier.fillMaxSize().blur(40.dp)
+    )
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background.copy(alpha = 0.82f)))
 }
 
 @Composable

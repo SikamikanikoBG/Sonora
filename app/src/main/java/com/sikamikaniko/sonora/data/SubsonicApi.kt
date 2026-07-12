@@ -16,7 +16,23 @@ interface SubsonicApi {
     suspend fun getAlbumList2(
         @Query("type") type: String = "alphabeticalByName",
         @Query("size") size: Int = 100,
-        @Query("offset") offset: Int = 0
+        @Query("offset") offset: Int = 0,
+        @Query("genre") genre: String? = null
+    ): SubsonicEnvelope
+
+    @GET("getGenres.view")
+    suspend fun getGenres(): SubsonicEnvelope
+
+    @GET("createPlaylist.view")
+    suspend fun createPlaylist(
+        @Query("name") name: String,
+        @Query("songId") songIds: List<String>? = null
+    ): SubsonicEnvelope
+
+    @GET("updatePlaylist.view")
+    suspend fun updatePlaylist(
+        @Query("playlistId") playlistId: String,
+        @Query("songIdToAdd") songIdToAdd: List<String>? = null
     ): SubsonicEnvelope
 
     @GET("getAlbum.view")

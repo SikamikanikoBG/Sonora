@@ -26,4 +26,12 @@ object PlayerCache {
             StandaloneDatabaseProvider(context.applicationContext)
         ).also { instance = it }
     }
+
+    fun sizeBytes(): Long = instance?.cacheSpace ?: 0L
+
+    fun clear() {
+        instance?.let { c ->
+            try { c.keys.toList().forEach { c.removeResource(it) } } catch (_: Exception) { }
+        }
+    }
 }

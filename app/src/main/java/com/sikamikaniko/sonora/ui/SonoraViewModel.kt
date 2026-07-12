@@ -16,6 +16,7 @@ import com.sikamikaniko.sonora.data.Album
 import com.sikamikaniko.sonora.data.AlbumWithSongs
 import com.sikamikaniko.sonora.data.Artist
 import com.sikamikaniko.sonora.data.ArtistWithAlbums
+import com.sikamikaniko.sonora.data.Genre
 import com.sikamikaniko.sonora.data.Playlist
 import com.sikamikaniko.sonora.data.PlaylistWithSongs
 import com.sikamikaniko.sonora.data.Prefs
@@ -24,6 +25,7 @@ import com.sikamikaniko.sonora.data.Song
 import com.sikamikaniko.sonora.data.Subsonic
 import com.sikamikaniko.sonora.data.Updater
 import com.sikamikaniko.sonora.playback.PlaybackService
+import com.sikamikaniko.sonora.playback.PlayerCache
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +49,9 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = Prefs(app)
 
+    val serverUrl: String? get() = prefs.baseUrl
+    val username: String? get() = prefs.username
+
     // ---- Auth / session ----
     private val _loggedIn = MutableStateFlow(prefs.isConfigured)
     val loggedIn: StateFlow<Boolean> = _loggedIn.asStateFlow()
@@ -64,8 +69,27 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     private val _artists = MutableStateFlow<List<Artist>>(emptyList())
     val artists: StateFlow<List<Artist>> = _artists.asStateFlow()
 
+    private val _genres = MutableStateFlow<List<Genre>>(emptyList())
+    val genres: StateFlow<List<Genre>> = _genres.asStateFlow()
+
+    private val _genreAlbums = MutableStateFlow<List<Album>>(emptyList())
+    val genreAlbums: StateFlow<List<Album>> = _genreAlbums.asStateFlow()
+
+    private val _albumSort = MutableStateFlow("alphabeticalByName")
+    val albumSort: StateFlow<String> = _albumSort.asStateFlow()
+
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
+
+    // ---- Appearance / settings ----
+    private val _dynamicColor = MutableStateFlow(prefs.dynamicColor)
+    val dynamicColor: StateFlow<Boolean> = _dynamicColor.asStateFlow()
+    private val _cacheBytes = MutableStateFlow(0L)
+    val cacheBytes: StateFlow<Long> = _cacheBytes.asStateFlow()
+
+    // ---- Add-to-playlist picker ----
+    private val _playlistPickerSongs = MutableStateFlow<List<Song>?>(null)
+    val playlistPickerSongs: StateFlow<List<Song>?> = _playlistPickerSongs.asStateFlow()
 
     // ---- Home rows ----
     private val _newest = MutableStateFlow<List<Album>>(emptyList())
@@ -286,18 +310,77 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshAll() {
-        loadLibrary(); loadHome(); loadArtists(); loadPlaylists(); loadStarred()
+        loadLibrary(); loadHome(); loadArtists(); loadGenres(); loadPlaylists(); loadStarred()
+        refreshCacheSize()
     }
 
     // ---- Loaders ----
     fun loadLibrary() = viewModelScope.launch {
         _loading.value = true; _error.value = null
         try {
-            val resp = Subsonic.api?.getAlbumList2("alphabeticalByName", 500)?.response
+            val resp = Subsonic.api?.getAlbumList2(_albumSort.value, 500)?.response
             if (resp?.error != null) _error.value = resp.error.message
             else _albums.value = resp?.albumList2?.album ?: emptyList()
         } catch (e: Exception) { _error.value = e.message ?: "Network error" }
         finally { _loading.value = false }
+    }
+
+    fun setAlbumSort(type: String) {
+        if (_albumSort.value == type) return
+        _albumSort.value = type
+        loadLibrary()
+    }
+
+    fun loadGenres() = viewModelScope.launch {
+        try { _genres.value = Subsonic.api?.getGenres()?.response?.genres?.genre ?: emptyList() }
+        catch (_: Exception) { }
+    }
+
+    fun loadGenreAlbums(name: String) = viewModelScope.launch {
+        try {
+            _genreAlbums.value = Subsonic.api?.getAlbumList2("byGenre", 500, 0, name)?.response?.albumList2?.album ?: emptyList()
+        } catch (_: Exception) { _genreAlbums.value = emptyList() }
+    }
+
+    fun shuffleLibrary() = viewModelScope.launch {
+        val songs = Subsonic.api?.getRandomSongs(150)?.response?.randomSongs?.song ?: emptyList()
+        shufflePlay(songs)
+    }
+
+    // ---- Appearance / cache ----
+    fun setDynamicColor(v: Boolean) { prefs.dynamicColor = v; _dynamicColor.value = v }
+    fun refreshCacheSize() { _cacheBytes.value = PlayerCache.sizeBytes() }
+    fun clearCache() { PlayerCache.clear(); refreshCacheSize(); _toast.value = "Cache cleared" }
+
+    // ---- Add to playlist ----
+    fun openPlaylistPicker(songs: List<Song>) { if (songs.isNotEmpty()) _playlistPickerSongs.value = songs }
+    fun dismissPlaylistPicker() { _playlistPickerSongs.value = null }
+    fun openPlaylistPickerFromSelection() = viewModelScope.launch {
+        val songs = resolveSelection()
+        clearSelection()
+        if (songs.isNotEmpty()) _playlistPickerSongs.value = songs
+    }
+    fun addPickerSongsToPlaylist(playlistId: String) {
+        val songs = _playlistPickerSongs.value ?: return
+        _playlistPickerSongs.value = null
+        viewModelScope.launch {
+            try {
+                Subsonic.api?.updatePlaylist(playlistId, songs.map { it.id })
+                loadPlaylists()
+                _toast.value = "Added ${songs.size} to playlist"
+            } catch (_: Exception) { _error.value = "Could not add to playlist" }
+        }
+    }
+    fun createPlaylistWithPickerSongs(name: String) {
+        val songs = _playlistPickerSongs.value ?: return
+        _playlistPickerSongs.value = null
+        viewModelScope.launch {
+            try {
+                Subsonic.api?.createPlaylist(name.trim(), songs.map { it.id })
+                loadPlaylists()
+                _toast.value = "Created \"$name\""
+            } catch (_: Exception) { _error.value = "Could not create playlist" }
+        }
     }
 
     fun loadHome() = viewModelScope.launch {

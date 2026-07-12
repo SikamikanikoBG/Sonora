@@ -1,10 +1,13 @@
 package com.sikamikaniko.sonora.ui
 
+import android.os.Build
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 
 private val Accent = Color(0xFF8A6CF2)
 private val AccentDim = Color(0xFF6C4CF1)
@@ -23,9 +26,15 @@ private val SonoraColors = darkColorScheme(
 )
 
 @Composable
-fun SonoraTheme(content: @Composable () -> Unit) {
+fun SonoraTheme(dynamicColor: Boolean = false, content: @Composable () -> Unit) {
+    val context = LocalContext.current
+    val scheme = if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        dynamicDarkColorScheme(context)
+    } else {
+        SonoraColors
+    }
     MaterialTheme(
-        colorScheme = SonoraColors,
+        colorScheme = scheme,
         typography = Typography(),
         content = content
     )

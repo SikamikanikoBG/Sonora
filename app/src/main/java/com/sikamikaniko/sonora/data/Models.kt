@@ -23,8 +23,13 @@ data class SubsonicResponse(
     val randomSongs: RandomSongs?,
     val playlists: Playlists?,
     val playlist: PlaylistWithSongs?,
-    val starred2: Starred2?
+    val starred2: Starred2?,
+    val genres: Genres?,
+    val randomSongs2: RandomSongs? = null
 )
+
+data class Genres(val genre: List<Genre>?)
+data class Genre(val value: String?, val songCount: Int? = null, val albumCount: Int? = null)
 
 data class SubsonicError(val code: Int?, val message: String?)
 

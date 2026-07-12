@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Album
@@ -179,6 +180,7 @@ private fun SelectBadge(selected: Boolean, modifier: Modifier = Modifier) {
 data class SongRowActions(
     val onPlayNext: () -> Unit,
     val onAddToQueue: () -> Unit,
+    val onAddToPlaylist: () -> Unit,
     val onGoToArtist: (() -> Unit)?,
     val onGoToAlbum: (() -> Unit)?,
     val onToggleStar: () -> Unit
@@ -251,6 +253,11 @@ private fun SongMenu(starred: Boolean, actions: SongRowActions) {
                 onClick = { open = false; actions.onAddToQueue() }
             )
             DropdownMenuItem(
+                text = { Text("Add to playlist") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
+                onClick = { open = false; actions.onAddToPlaylist() }
+            )
+            DropdownMenuItem(
                 text = { Text(if (starred) "Remove favourite" else "Favourite") },
                 leadingIcon = { Icon(if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, null) },
                 onClick = { open = false; actions.onToggleStar() }
@@ -289,6 +296,7 @@ fun SongItem(vm: SonoraViewModel, nav: NavController, song: Song, songs: List<So
         actions = SongRowActions(
             onPlayNext = { vm.playNext(listOf(song)) },
             onAddToQueue = { vm.addToQueue(listOf(song)) },
+            onAddToPlaylist = { vm.openPlaylistPicker(listOf(song)) },
             onGoToArtist = song.artistId?.let { aid -> { nav.navigate("artist/$aid") } },
             onGoToAlbum = song.albumId?.let { alid -> { nav.navigate("album/$alid") } },
             onToggleStar = { vm.toggleStar(song.id) }
@@ -310,6 +318,7 @@ fun SelectionBar(count: Int, mode: SelMode, vm: SonoraViewModel) {
             IconButton(onClick = { vm.playSelection(true) }) { Icon(Icons.Filled.Shuffle, "Shuffle") }
             IconButton(onClick = { vm.playNextSelection() }) { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, "Play next") }
             IconButton(onClick = { vm.queueSelection() }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Add to queue") }
+            IconButton(onClick = { vm.openPlaylistPickerFromSelection() }) { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Add to playlist") }
         }
     }
 }

@@ -18,6 +18,10 @@ class Prefs(context: Context) {
         get() = sp.getString("password", null)
         set(v) = sp.edit().putString("password", v).apply()
 
+    var dynamicColor: Boolean
+        get() = sp.getBoolean("dynamicColor", false)
+        set(v) = sp.edit().putBoolean("dynamicColor", v).apply()
+
     val isConfigured: Boolean
         get() = !baseUrl.isNullOrBlank() && !username.isNullOrBlank() && !password.isNullOrBlank()
 

@@ -10,8 +10,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,8 +40,9 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
         TopAppBar(
             title = { Text("Sonora") },
             actions = {
+                IconButton(onClick = { vm.shuffleLibrary() }) { Icon(Icons.Filled.Shuffle, "Shuffle all") }
                 IconButton(onClick = { vm.refreshAll() }) { Icon(Icons.Filled.Refresh, "Refresh") }
-                IconButton(onClick = { vm.logout() }) { Icon(Icons.Filled.Logout, "Log out") }
+                IconButton(onClick = { nav.navigate("settings") }) { Icon(Icons.Filled.Settings, "Settings") }
             },
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
