@@ -53,7 +53,8 @@ object AiClient {
                 val payload = mutableMapOf<String, Any>(
                     "model" to model,
                     "messages" to messages.map { mapOf("role" to it.role, "content" to it.content) },
-                    "stream" to false
+                    "stream" to false,
+                    "options" to mapOf("num_ctx" to 8192, "temperature" to 0.4)
                 )
                 if (json) payload["format"] = "json"
                 val body = gson.toJson(payload).toRequestBody(JSON)
@@ -80,7 +81,8 @@ object AiClient {
             val payload = mapOf(
                 "model" to model,
                 "messages" to messages.map { mapOf("role" to it.role, "content" to it.content) },
-                "stream" to true
+                "stream" to true,
+                "options" to mapOf("num_ctx" to 8192, "temperature" to 0.6)
             )
             val body = gson.toJson(payload).toRequestBody(JSON)
             val req = Request.Builder().url("${base(baseUrl)}/api/chat").post(body).build()

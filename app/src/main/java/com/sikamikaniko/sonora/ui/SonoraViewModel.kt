@@ -16,6 +16,7 @@ import com.sikamikaniko.sonora.BuildConfig
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.sikamikaniko.sonora.data.AiClient
 import com.sikamikaniko.sonora.data.Album
 import com.sikamikaniko.sonora.data.AlbumWithSongs
@@ -177,33 +178,63 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setAiEnabled(v: Boolean) { prefs.aiEnabled = v; _aiEnabled.value = v }
     fun setAiBaseUrl(v: String) { prefs.aiBaseUrl = v; _aiBaseUrl.value = v }
-    fun setAiModel(v: String) { prefs.aiModel = v; _aiModel.value = v }
+    fun setAiModel(v: String) {
+        prefs.aiModel = v; _aiModel.value = v
+        // Choosing a model implies wanting AI on — avoids the "enabled?" trap.
+        if (v.isNotBlank() && !_aiEnabled.value) { prefs.aiEnabled = true; _aiEnabled.value = true }
+    }
     fun setAiLang(v: String) { prefs.aiLang = v; _aiLang.value = v }
     fun loadAiModels() = viewModelScope.launch {
         _aiModels.value = AiClient.listModels(_aiBaseUrl.value)
     }
     fun clearAiText() { _aiText.value = ""; _aiStreaming.value = false }
 
-    private data class DjResult(val albumIds: List<String>? = null)
-
     private suspend fun pickAlbums(prompt: String, count: Int): List<Album> {
-        val lib = _albums.value
-        if (lib.isEmpty()) return emptyList()
-        val catalog = lib.joinToString("\n") { a ->
-            "${a.id} | ${a.artist ?: "?"} — ${a.name ?: "?"}${a.year?.let { " ($it)" } ?: ""}"
+        var lib = _albums.value
+        if (lib.isEmpty()) {
+            lib = try {
+                Subsonic.api?.getAlbumList2("alphabeticalByName", 500)?.response?.albumList2?.album ?: emptyList()
+            } catch (_: Exception) { emptyList() }
         }
-        val sys = "You are an expert music DJ. From the user's library below (format: id | Artist — Album), " +
-            "choose about $count albums that best fit the request. Reply ONLY with JSON: {\"albumIds\":[\"id\",...]}. " +
-            "Use ONLY ids that appear in the library."
-        val user = "Request: $prompt\n\nLibrary:\n$catalog"
+        if (lib.isEmpty()) return emptyList()
+        // Cap so the whole list fits the model context; number the entries so even
+        // small models only have to return short integers (robust across models).
+        val capped = if (lib.size > 200) lib.shuffled().take(200) else lib
+        val numbered = capped.mapIndexed { i, a ->
+            "${i + 1}. ${a.artist ?: "?"} — ${a.name ?: "?"}"
+        }.joinToString("\n")
+        // Instruction placed AFTER the list so context truncation can't drop it.
+        val user = "You are a music DJ. Below is a numbered music library.\n\n$numbered\n\n" +
+            "Task: pick about $count entries that best fit this request: \"$prompt\".\n" +
+            "Reply ONLY as JSON: {\"picks\":[numbers]} using ONLY numbers from the list above."
         val json = AiClient.chat(
             _aiBaseUrl.value, _aiModel.value,
-            listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user)),
+            listOf(AiClient.Msg("user", user)),
             json = true
         ) ?: return emptyList()
-        val ids = try { aiGson.fromJson(json, DjResult::class.java)?.albumIds } catch (_: Exception) { null } ?: return emptyList()
-        val byId = lib.associateBy { it.id }
-        return ids.mapNotNull { byId[it] }
+        return parsePicks(json).mapNotNull { capped.getOrNull(it - 1) }.distinct()
+    }
+
+    /** Leniently pulls a list of 1-based indices from whatever JSON the model returned. */
+    private fun parsePicks(json: String): List<Int> {
+        return try {
+            val root = JsonParser.parseString(json)
+            val arr = when {
+                root.isJsonArray -> root.asJsonArray
+                root.isJsonObject -> root.asJsonObject.entrySet().firstOrNull { it.value.isJsonArray }?.value?.asJsonArray
+                else -> null
+            } ?: return emptyList()
+            arr.mapNotNull { el ->
+                try {
+                    if (el.isJsonPrimitive) {
+                        val p = el.asJsonPrimitive
+                        if (p.isNumber) p.asInt else p.asString.trim().toIntOrNull()
+                    } else null
+                } catch (_: Exception) { null }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private suspend fun gatherSongs(albums: List<Album>): List<Song> =
