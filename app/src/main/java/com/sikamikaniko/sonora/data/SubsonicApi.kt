@@ -38,4 +38,25 @@ interface SubsonicApi {
 
     @GET("getRandomSongs.view")
     suspend fun getRandomSongs(@Query("size") size: Int = 50): SubsonicEnvelope
+
+    @GET("getPlaylists.view")
+    suspend fun getPlaylists(): SubsonicEnvelope
+
+    @GET("getPlaylist.view")
+    suspend fun getPlaylist(@Query("id") id: String): SubsonicEnvelope
+
+    @GET("getStarred2.view")
+    suspend fun getStarred2(): SubsonicEnvelope
+
+    @GET("star.view")
+    suspend fun star(@Query("id") id: String): SubsonicEnvelope
+
+    @GET("unstar.view")
+    suspend fun unstar(@Query("id") id: String): SubsonicEnvelope
+
+    @GET("scrobble.view")
+    suspend fun scrobble(
+        @Query("id") id: String,
+        @Query("submission") submission: Boolean = true
+    ): SubsonicEnvelope
 }

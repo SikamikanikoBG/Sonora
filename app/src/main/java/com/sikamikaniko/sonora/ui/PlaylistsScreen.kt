@@ -1,6 +1,8 @@
 package com.sikamikaniko.sonora.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,10 +13,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
@@ -37,63 +39,84 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavController
+import com.sikamikaniko.sonora.data.Playlist
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AlbumScreen(vm: SonoraViewModel, albumId: String, onBack: () -> Unit) {
-    LaunchedEffect(albumId) { vm.openAlbum(albumId) }
-    val album by vm.currentAlbum.collectAsState()
+fun PlaylistsScreen(vm: SonoraViewModel, nav: NavController) {
+    val playlists by vm.playlists.collectAsState()
+    Column(Modifier.fillMaxSize()) {
+        TopAppBar(
+            title = { Text("Playlists") },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.background,
+                titleContentColor = MaterialTheme.colorScheme.onBackground
+            )
+        )
+        if (playlists.isEmpty()) { CenterMessage("No playlists yet. Create playlists on your server and they'll appear here."); return@Column }
+        LazyColumn(Modifier.fillMaxSize()) {
+            items(playlists, key = { it.id }) { pl ->
+                PlaylistRow(pl) { nav.navigate("playlist/${pl.id}") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistRow(pl: Playlist, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        if (pl.coverArt != null) Artwork(pl.coverArt, size = 48.dp)
+        else Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.size(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(pl.name ?: "Playlist", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val n = pl.songCount ?: 0
+            Text("$n song${if (n == 1) "" else "s"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlaylistScreen(vm: SonoraViewModel, playlistId: String, nav: NavController) {
+    LaunchedEffect(playlistId) { vm.openPlaylist(playlistId) }
+    val pl by vm.currentPlaylist.collectAsState()
     val starred by vm.starredIds.collectAsState()
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
             TopAppBar(
-                title = { Text(album?.name ?: "Album", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { Text(pl?.name ?: "Playlist", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                    IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onBackground
                 )
             )
-
-            val current = album
+            val current = pl
             if (current == null) {
-                androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 return@Column
             }
-            val songs = current.song ?: emptyList()
-            val albumStarred = current.id != null && starred.contains(current.id)
-
+            val songs = current.entry ?: emptyList()
             LazyColumn(Modifier.fillMaxSize()) {
                 item {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth().padding(16.dp)
-                    ) {
-                        Artwork(current.coverArt, size = 220.dp, corner = 16.dp)
-                        Spacer(Modifier.height(14.dp))
-                        Text(current.name ?: "Unknown album", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text(current.artist ?: "", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(14.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                        Text(current.name ?: "Playlist", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("${songs.size} songs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Button(onClick = { vm.playSongs(songs, 0) }) {
                                 Icon(Icons.Filled.PlayArrow, null); Spacer(Modifier.size(6.dp)); Text("Play")
                             }
                             OutlinedButton(onClick = { vm.shufflePlay(songs) }) {
                                 Icon(Icons.Filled.Shuffle, null); Spacer(Modifier.size(6.dp)); Text("Shuffle")
-                            }
-                            current.id?.let { id ->
-                                IconButton(onClick = { vm.toggleStar(id) }) {
-                                    Icon(
-                                        if (albumStarred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                                        "Favourite",
-                                        tint = if (albumStarred) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
                             }
                         }
                     }
@@ -101,7 +124,8 @@ fun AlbumScreen(vm: SonoraViewModel, albumId: String, onBack: () -> Unit) {
                 itemsIndexed(songs) { index, song ->
                     SongRow(
                         song = song,
-                        index = index + 1,
+                        starred = starred.contains(song.id),
+                        onToggleStar = { vm.toggleStar(song.id) },
                         onClick = { vm.playSongs(songs, index) }
                     )
                 }

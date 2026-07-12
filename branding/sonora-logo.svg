@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1220 400" width="1220" height="400">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B3BE0"/>
+      <stop offset="1" stop-color="#9A6CFF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Icon tile -->
+  <rect x="40" y="40" width="320" height="320" rx="84" fill="url(#g)"/>
+  <g stroke="#FFFFFF" stroke-width="22" stroke-linecap="round">
+    <line x1="132" y1="155" x2="132" y2="245"/>
+    <line x1="166" y1="125" x2="166" y2="275"/>
+    <line x1="200" y1="95"  x2="200" y2="305"/>
+    <line x1="234" y1="125" x2="234" y2="275"/>
+    <line x1="268" y1="155" x2="268" y2="245"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="410" y="228" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+        font-size="150" font-weight="700" fill="#7C5CFF" letter-spacing="-2">Sonora</text>
+  <text x="414" y="288" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+        font-size="42" font-weight="500" fill="#8A8F9E" letter-spacing="6">YOUR MUSIC, EVERYWHERE</text>
+</svg>
