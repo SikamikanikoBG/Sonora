@@ -48,17 +48,17 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
             )
         )
         LazyColumn(Modifier.fillMaxSize()) {
-            item { Rail("Recently added", newest) { nav.navigate("album/${it.id}") } }
-            item { Rail("Recently played", recent) { nav.navigate("album/${it.id}") } }
-            item { Rail("Most played", frequent) { nav.navigate("album/${it.id}") } }
-            item { Rail("Discover", random) { nav.navigate("album/${it.id}") } }
+            item { Rail("Recently added", newest, vm, nav) }
+            item { Rail("Recently played", recent, vm, nav) }
+            item { Rail("Most played", frequent, vm, nav) }
+            item { Rail("Discover", random, vm, nav) }
             item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
 
 @Composable
-private fun Rail(title: String, albums: List<Album>, onOpen: (Album) -> Unit) {
+private fun Rail(title: String, albums: List<Album>, vm: SonoraViewModel, nav: NavController) {
     if (albums.isEmpty()) return
     SectionHeader(title)
     LazyRow(
@@ -66,7 +66,7 @@ private fun Rail(title: String, albums: List<Album>, onOpen: (Album) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         items(albums, key = { it.id }) { album ->
-            AlbumRailCard(album) { onOpen(album) }
+            AlbumRailItem(vm, nav, album)
         }
     }
 }

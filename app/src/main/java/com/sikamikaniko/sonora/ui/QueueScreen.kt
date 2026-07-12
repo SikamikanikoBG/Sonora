@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -72,6 +73,9 @@ fun QueueScreen(vm: SonoraViewModel, onBack: () -> Unit) {
                         }
                         if (item.isCurrent) {
                             Icon(Icons.Filled.VolumeUp, null, tint = MaterialTheme.colorScheme.primary)
+                        }
+                        IconButton(onClick = { vm.removeFromQueue(item.index) }) {
+                            Icon(Icons.Filled.Close, "Remove", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }

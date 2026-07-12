@@ -80,7 +80,7 @@ private fun AlbumsTab(vm: SonoraViewModel, nav: NavController) {
         modifier = Modifier.fillMaxSize()
     ) {
         gridItems(albums, key = { it.id }) { album ->
-            AlbumGridCard(album) { nav.navigate("album/${album.id}") }
+            AlbumItem(vm, nav, album)
         }
     }
 }
@@ -116,7 +116,6 @@ fun ArtistRow(artist: Artist, onClick: () -> Unit) {
 private fun FavouritesTab(vm: SonoraViewModel, nav: NavController) {
     val songs by vm.starredSongs.collectAsState()
     val albums by vm.starredAlbums.collectAsState()
-    val starred by vm.starredIds.collectAsState()
     if (songs.isEmpty() && albums.isEmpty()) {
         CenterMessage("No favourites yet. Tap the heart on any song to save it here.")
         return
@@ -127,20 +126,15 @@ private fun FavouritesTab(vm: SonoraViewModel, nav: NavController) {
             item {
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     items(albums, key = { it.id }) { album ->
-                        AlbumRailCard(album) { nav.navigate("album/${album.id}") }
+                        AlbumRailItem(vm, nav, album)
                     }
                 }
             }
         }
         if (songs.isNotEmpty()) {
-            item { SectionHeader("Songs") }
+            item { PlayAllHeader("Songs", onPlay = { vm.playSongs(songs, 0) }, onShuffle = { vm.shufflePlay(songs) }) }
             itemsIndexed(songs) { index, song ->
-                SongRow(
-                    song = song,
-                    starred = starred.contains(song.id),
-                    onToggleStar = { vm.toggleStar(song.id) },
-                    onClick = { vm.playSongs(songs, index) }
-                )
+                SongItem(vm, nav, song, songs, index, showIndex = false)
             }
         }
         item { Spacer(Modifier.height(24.dp)) }

@@ -11,6 +11,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.sikamikaniko.sonora.BuildConfig
 import com.sikamikaniko.sonora.data.Album
 import com.sikamikaniko.sonora.data.AlbumWithSongs
 import com.sikamikaniko.sonora.data.Artist
@@ -20,7 +21,6 @@ import com.sikamikaniko.sonora.data.PlaylistWithSongs
 import com.sikamikaniko.sonora.data.Prefs
 import com.sikamikaniko.sonora.data.SearchResult3
 import com.sikamikaniko.sonora.data.Song
-import com.sikamikaniko.sonora.BuildConfig
 import com.sikamikaniko.sonora.data.Subsonic
 import com.sikamikaniko.sonora.data.Updater
 import com.sikamikaniko.sonora.playback.PlaybackService
@@ -41,6 +41,8 @@ data class QueueItem(
     val isCurrent: Boolean
 )
 
+enum class SelMode { NONE, SONGS, ALBUMS }
+
 class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = Prefs(app)
@@ -51,6 +53,9 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+
+    private val _toast = MutableStateFlow<String?>(null)
+    val toast: StateFlow<String?> = _toast.asStateFlow()
 
     // ---- Library ----
     private val _albums = MutableStateFlow<List<Album>>(emptyList())
@@ -96,6 +101,14 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     val starredSongs: StateFlow<List<Song>> = _starredSongs.asStateFlow()
     private val _starredAlbums = MutableStateFlow<List<Album>>(emptyList())
     val starredAlbums: StateFlow<List<Album>> = _starredAlbums.asStateFlow()
+
+    // ---- Multi-select ----
+    private val _selMode = MutableStateFlow(SelMode.NONE)
+    val selMode: StateFlow<SelMode> = _selMode.asStateFlow()
+    private val _selSongs = MutableStateFlow<List<Song>>(emptyList())
+    val selectedSongs: StateFlow<List<Song>> = _selSongs.asStateFlow()
+    private val _selAlbums = MutableStateFlow<List<Album>>(emptyList())
+    val selectedAlbums: StateFlow<List<Album>> = _selAlbums.asStateFlow()
 
     // ---- Player ----
     private var controller: MediaController? = null
@@ -160,13 +173,9 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun checkForUpdate() {
-        viewModelScope.launch {
-            _update.value = Updater.check(BuildConfig.VERSION_NAME)
-        }
+        viewModelScope.launch { _update.value = Updater.check(BuildConfig.VERSION_NAME) }
     }
-
     fun dismissUpdate() { _update.value = null }
-
     fun downloadAndInstallUpdate() {
         val info = _update.value ?: return
         val ctx = getApplication<Application>()
@@ -174,10 +183,11 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             _updateBusy.value = true
             val file = Updater.download(ctx, info.apkUrl)
             _updateBusy.value = false
-            if (file != null) Updater.install(ctx, file)
-            else _error.value = "Update download failed"
+            if (file != null) Updater.install(ctx, file) else _error.value = "Update download failed"
         }
     }
+
+    fun consumeToast() { _toast.value = null }
 
     private fun connectController() {
         val ctx = getApplication<Application>()
@@ -251,9 +261,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
                     _loggedIn.value = true
                     refreshAll()
                     onResult(true, null)
-                } else {
-                    onResult(false, resp?.error?.message ?: "Login failed")
-                }
+                } else onResult(false, resp?.error?.message ?: "Login failed")
             } catch (e: Exception) {
                 onResult(false, e.message ?: "Cannot reach server")
             }
@@ -272,31 +280,24 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _currentArtist.value = null; _currentPlaylist.value = null
         _searchResult.value = null; _starredIds.value = emptySet()
         _starredSongs.value = emptyList(); _starredAlbums.value = emptyList()
+        clearSelection()
         _hasCurrent.value = false
         _loggedIn.value = false
     }
 
     fun refreshAll() {
-        loadLibrary()
-        loadHome()
-        loadArtists()
-        loadPlaylists()
-        loadStarred()
+        loadLibrary(); loadHome(); loadArtists(); loadPlaylists(); loadStarred()
     }
 
     // ---- Loaders ----
     fun loadLibrary() = viewModelScope.launch {
-        _loading.value = true
-        _error.value = null
+        _loading.value = true; _error.value = null
         try {
             val resp = Subsonic.api?.getAlbumList2("alphabeticalByName", 500)?.response
             if (resp?.error != null) _error.value = resp.error.message
             else _albums.value = resp?.albumList2?.album ?: emptyList()
-        } catch (e: Exception) {
-            _error.value = e.message ?: "Network error"
-        } finally {
-            _loading.value = false
-        }
+        } catch (e: Exception) { _error.value = e.message ?: "Network error" }
+        finally { _loading.value = false }
     }
 
     fun loadHome() = viewModelScope.launch {
@@ -337,38 +338,33 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openAlbum(id: String) = viewModelScope.launch {
         _error.value = null
-        try {
-            _currentAlbum.value = Subsonic.api?.getAlbum(id)?.response?.album
-        } catch (e: Exception) { _error.value = e.message ?: "Could not load album" }
+        try { _currentAlbum.value = Subsonic.api?.getAlbum(id)?.response?.album }
+        catch (e: Exception) { _error.value = e.message ?: "Could not load album" }
     }
 
     fun openArtist(id: String) = viewModelScope.launch {
         _error.value = null
-        try {
-            _currentArtist.value = Subsonic.api?.getArtist(id)?.response?.artist
-        } catch (e: Exception) { _error.value = e.message ?: "Could not load artist" }
+        try { _currentArtist.value = Subsonic.api?.getArtist(id)?.response?.artist }
+        catch (e: Exception) { _error.value = e.message ?: "Could not load artist" }
     }
 
     fun openPlaylist(id: String) = viewModelScope.launch {
         _error.value = null
-        try {
-            _currentPlaylist.value = Subsonic.api?.getPlaylist(id)?.response?.playlist
-        } catch (e: Exception) { _error.value = e.message ?: "Could not load playlist" }
+        try { _currentPlaylist.value = Subsonic.api?.getPlaylist(id)?.response?.playlist }
+        catch (e: Exception) { _error.value = e.message ?: "Could not load playlist" }
     }
 
     fun search(query: String) {
         if (query.isBlank()) { _searchResult.value = null; return }
         viewModelScope.launch {
-            try {
-                _searchResult.value = Subsonic.api?.search3(query)?.response?.searchResult3
-            } catch (e: Exception) { _error.value = e.message ?: "Search failed" }
+            try { _searchResult.value = Subsonic.api?.search3(query)?.response?.searchResult3 }
+            catch (e: Exception) { _error.value = e.message ?: "Search failed" }
         }
     }
 
     // ---- Favourites ----
     fun toggleStar(id: String) {
         val currentlyStarred = _starredIds.value.contains(id)
-        // optimistic update
         _starredIds.value = _starredIds.value.toMutableSet().apply {
             if (currentlyStarred) remove(id) else add(id)
         }
@@ -380,7 +376,75 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun isStarred(id: String?): Boolean = id != null && _starredIds.value.contains(id)
+    // ---- Selection ----
+    fun toggleSongSelection(song: Song) {
+        if (_selMode.value == SelMode.ALBUMS) clearSelection()
+        val cur = _selSongs.value
+        val next = if (cur.any { it.id == song.id }) cur.filter { it.id != song.id } else cur + song
+        _selSongs.value = next
+        _selMode.value = if (next.isEmpty()) SelMode.NONE else SelMode.SONGS
+    }
+
+    fun toggleAlbumSelection(album: Album) {
+        if (_selMode.value == SelMode.SONGS) clearSelection()
+        val cur = _selAlbums.value
+        val next = if (cur.any { it.id == album.id }) cur.filter { it.id != album.id } else cur + album
+        _selAlbums.value = next
+        _selMode.value = if (next.isEmpty()) SelMode.NONE else SelMode.ALBUMS
+    }
+
+    fun isSongSelected(id: String) = _selSongs.value.any { it.id == id }
+    fun isAlbumSelected(id: String) = _selAlbums.value.any { it.id == id }
+
+    fun clearSelection() {
+        _selMode.value = SelMode.NONE
+        _selSongs.value = emptyList()
+        _selAlbums.value = emptyList()
+    }
+
+    private suspend fun resolveSelection(): List<Song> = when (_selMode.value) {
+        SelMode.SONGS -> _selSongs.value
+        SelMode.ALBUMS -> _selAlbums.value.flatMap { al ->
+            Subsonic.api?.getAlbum(al.id)?.response?.album?.song ?: emptyList()
+        }
+        SelMode.NONE -> emptyList()
+    }
+
+    fun playSelection(shuffle: Boolean) = viewModelScope.launch {
+        val songs = resolveSelection()
+        clearSelection()
+        if (shuffle) shufflePlay(songs) else playSongs(songs, 0)
+    }
+
+    fun queueSelection() = viewModelScope.launch {
+        val songs = resolveSelection()
+        val n = songs.size
+        clearSelection()
+        addToQueue(songs)
+        _toast.value = "Added $n to queue"
+    }
+
+    fun playNextSelection() = viewModelScope.launch {
+        val songs = resolveSelection()
+        clearSelection()
+        playNext(songs)
+    }
+
+    // ---- Bulk "play all" ----
+    private suspend fun songsOfArtist(artistId: String): List<Song> {
+        val albums = Subsonic.api?.getArtist(artistId)?.response?.artist?.album ?: emptyList()
+        return albums.flatMap { Subsonic.api?.getAlbum(it.id)?.response?.album?.song ?: emptyList() }
+    }
+
+    fun playArtist(artistId: String, shuffle: Boolean) = viewModelScope.launch {
+        val songs = songsOfArtist(artistId)
+        if (shuffle) shufflePlay(songs) else playSongs(songs, 0)
+    }
+
+    fun playSearchSongs(shuffle: Boolean) {
+        val songs = _searchResult.value?.song ?: return
+        if (shuffle) shufflePlay(songs) else playSongs(songs, 0)
+    }
 
     // ---- Playback ----
     fun playSongs(songs: List<Song>, startIndex: Int) {
@@ -389,8 +453,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val items = songs.map { toMediaItem(it) }
         c.shuffleModeEnabled = false
         c.setMediaItems(items, startIndex.coerceIn(0, items.lastIndex), 0L)
-        c.prepare()
-        c.play()
+        c.prepare(); c.play()
     }
 
     fun shufflePlay(songs: List<Song>) {
@@ -399,8 +462,31 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val items = songs.map { toMediaItem(it) }
         c.setMediaItems(items, 0, 0L)
         c.shuffleModeEnabled = true
-        c.prepare()
-        c.play()
+        c.prepare(); c.play()
+    }
+
+    fun addToQueue(songs: List<Song>) {
+        val c = controller ?: return
+        if (songs.isEmpty()) return
+        val items = songs.map { toMediaItem(it) }
+        if (c.mediaItemCount == 0) { c.setMediaItems(items); c.prepare(); c.play() }
+        else c.addMediaItems(items)
+        rebuildQueue()
+    }
+
+    fun playNext(songs: List<Song>) {
+        val c = controller ?: return
+        if (songs.isEmpty()) return
+        val items = songs.map { toMediaItem(it) }
+        if (c.mediaItemCount == 0) { c.setMediaItems(items); c.prepare(); c.play() }
+        else c.addMediaItems((c.currentMediaItemIndex + 1).coerceAtMost(c.mediaItemCount), items)
+        rebuildQueue()
+    }
+
+    fun removeFromQueue(index: Int) {
+        val c = controller ?: return
+        if (index in 0 until c.mediaItemCount) c.removeMediaItem(index)
+        rebuildQueue()
     }
 
     fun togglePlay() { controller?.let { if (it.isPlaying) it.pause() else it.play() } }
@@ -432,21 +518,14 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         sleepJob = viewModelScope.launch {
             var left = minutes
             while (left > 0 && isActive) {
-                delay(60_000)
-                left--
-                _sleepMinutesLeft.value = left
+                delay(60_000); left--; _sleepMinutesLeft.value = left
             }
-            if (isActive) {
-                controller?.pause()
-                _sleepMinutesLeft.value = 0
-            }
+            if (isActive) { controller?.pause(); _sleepMinutesLeft.value = 0 }
         }
     }
 
     fun cancelSleepTimer() {
-        sleepJob?.cancel()
-        sleepJob = null
-        _sleepMinutesLeft.value = 0
+        sleepJob?.cancel(); sleepJob = null; _sleepMinutesLeft.value = 0
     }
 
     private fun scrobble(id: String) {
@@ -462,9 +541,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             .setTitle(song.title ?: "Unknown")
             .setArtist(song.artist ?: "Unknown artist")
             .setAlbumTitle(song.album)
-            .apply {
-                Subsonic.coverArtUrl(song.coverArt, 512)?.let { setArtworkUri(Uri.parse(it)) }
-            }
+            .apply { Subsonic.coverArtUrl(song.coverArt, 512)?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
         return MediaItem.Builder()
             .setMediaId(song.id)

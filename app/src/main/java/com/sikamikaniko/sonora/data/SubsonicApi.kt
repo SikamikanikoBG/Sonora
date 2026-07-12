@@ -25,9 +25,9 @@ interface SubsonicApi {
     @GET("search3.view")
     suspend fun search3(
         @Query("query") query: String,
-        @Query("songCount") songCount: Int = 40,
-        @Query("albumCount") albumCount: Int = 40,
-        @Query("artistCount") artistCount: Int = 40
+        @Query("songCount") songCount: Int = 150,
+        @Query("albumCount") albumCount: Int = 60,
+        @Query("artistCount") artistCount: Int = 60
     ): SubsonicEnvelope
 
     @GET("getArtists.view")

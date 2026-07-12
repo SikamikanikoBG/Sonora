@@ -37,10 +37,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavController
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AlbumScreen(vm: SonoraViewModel, albumId: String, onBack: () -> Unit) {
+fun AlbumScreen(vm: SonoraViewModel, albumId: String, nav: NavController, onBack: () -> Unit) {
     LaunchedEffect(albumId) { vm.openAlbum(albumId) }
     val album by vm.currentAlbum.collectAsState()
     val starred by vm.starredIds.collectAsState()
@@ -99,11 +100,7 @@ fun AlbumScreen(vm: SonoraViewModel, albumId: String, onBack: () -> Unit) {
                     }
                 }
                 itemsIndexed(songs) { index, song ->
-                    SongRow(
-                        song = song,
-                        index = index + 1,
-                        onClick = { vm.playSongs(songs, index) }
-                    )
+                    SongItem(vm, nav, song, songs, index, showIndex = true)
                 }
                 item { Spacer(Modifier.height(90.dp)) }
             }

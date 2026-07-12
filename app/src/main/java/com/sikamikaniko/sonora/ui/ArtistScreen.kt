@@ -4,18 +4,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -55,15 +63,28 @@ fun ArtistScreen(vm: SonoraViewModel, artistId: String, nav: NavController) {
             }
             val albums = current.album ?: emptyList()
             if (albums.isEmpty()) { CenterMessage("No albums for this artist."); return@Column }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Button(onClick = { vm.playArtist(artistId, false) }, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Filled.PlayArrow, null); Spacer(Modifier.size(6.dp)); Text("Play all")
+                }
+                OutlinedButton(onClick = { vm.playArtist(artistId, true) }, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Filled.Shuffle, null); Spacer(Modifier.size(6.dp)); Text("Shuffle")
+                }
+            }
+
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(158.dp),
                 contentPadding = PaddingValues(14.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxWidth().weight(1f)
             ) {
                 gridItems(albums, key = { it.id }) { album ->
-                    AlbumGridCard(album) { nav.navigate("album/${album.id}") }
+                    AlbumItem(vm, nav, album)
                 }
             }
         }

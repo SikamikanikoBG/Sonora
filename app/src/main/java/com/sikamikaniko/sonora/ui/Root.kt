@@ -13,9 +13,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,14 +51,26 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
 
     val nav = rememberNavController()
     val hasCurrent by vm.hasCurrent.collectAsState()
+    val selMode by vm.selMode.collectAsState()
+    val selectedSongs by vm.selectedSongs.collectAsState()
+    val selectedAlbums by vm.selectedAlbums.collectAsState()
+    val toast by vm.toast.collectAsState()
+    val snackbar = remember { SnackbarHostState() }
     var showPlayer by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     val tabs = listOf(Tab.Home, Tab.Library, Tab.Search, Tab.Playlists)
+    val selCount = if (selMode == SelMode.SONGS) selectedSongs.size else selectedAlbums.size
+
+    LaunchedEffect(toast) {
+        toast?.let { snackbar.showSnackbar(it); vm.consumeToast() }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             Column {
-                if (hasCurrent) MiniPlayer(vm, onExpand = { showPlayer = true })
+                if (selMode != SelMode.NONE) SelectionBar(selCount, selMode, vm)
+                else if (hasCurrent) MiniPlayer(vm, onExpand = { showPlayer = true })
                 NavigationBar {
                     val backStack by nav.currentBackStackEntryAsState()
                     val route = backStack?.destination?.route
@@ -83,7 +98,7 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             composable(Tab.Search.route) { SearchScreen(vm, nav) }
             composable(Tab.Playlists.route) { PlaylistsScreen(vm, nav) }
             composable("album/{id}") { entry ->
-                AlbumScreen(vm, entry.arguments?.getString("id") ?: "", onBack = { nav.popBackStack() })
+                AlbumScreen(vm, entry.arguments?.getString("id") ?: "", nav, onBack = { nav.popBackStack() })
             }
             composable("artist/{id}") { entry ->
                 ArtistScreen(vm, entry.arguments?.getString("id") ?: "", nav)
@@ -100,10 +115,11 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     if (showQueue) {
         QueueScreen(vm, onBack = { showQueue = false })
     }
-    BackHandler(enabled = showPlayer || showQueue) {
+    BackHandler(enabled = showPlayer || showQueue || selMode != SelMode.NONE) {
         when {
             showQueue -> showQueue = false
             showPlayer -> showPlayer = false
+            selMode != SelMode.NONE -> vm.clearSelection()
         }
     }
 }

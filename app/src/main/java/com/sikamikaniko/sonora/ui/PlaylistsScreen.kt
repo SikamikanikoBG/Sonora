@@ -85,7 +85,6 @@ private fun PlaylistRow(pl: Playlist, onClick: () -> Unit) {
 fun PlaylistScreen(vm: SonoraViewModel, playlistId: String, nav: NavController) {
     LaunchedEffect(playlistId) { vm.openPlaylist(playlistId) }
     val pl by vm.currentPlaylist.collectAsState()
-    val starred by vm.starredIds.collectAsState()
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
@@ -122,12 +121,7 @@ fun PlaylistScreen(vm: SonoraViewModel, playlistId: String, nav: NavController) 
                     }
                 }
                 itemsIndexed(songs) { index, song ->
-                    SongRow(
-                        song = song,
-                        starred = starred.contains(song.id),
-                        onToggleStar = { vm.toggleStar(song.id) },
-                        onClick = { vm.playSongs(songs, index) }
-                    )
+                    SongItem(vm, nav, song, songs, index, showIndex = false)
                 }
                 item { Spacer(Modifier.height(90.dp)) }
             }

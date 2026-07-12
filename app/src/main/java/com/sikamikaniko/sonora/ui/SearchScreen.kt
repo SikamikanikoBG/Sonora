@@ -35,7 +35,6 @@ import androidx.navigation.NavController
 @Composable
 fun SearchScreen(vm: SonoraViewModel, nav: NavController) {
     val result by vm.searchResult.collectAsState()
-    val starred by vm.starredIds.collectAsState()
     var query by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize()) {
@@ -79,20 +78,21 @@ fun SearchScreen(vm: SonoraViewModel, nav: NavController) {
                 item {
                     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(albums, key = { "al_" + it.id }) { album ->
-                            AlbumRailCard(album) { nav.navigate("album/${album.id}") }
+                            AlbumRailItem(vm, nav, album)
                         }
                     }
                 }
             }
             if (songs.isNotEmpty()) {
-                item { SectionHeader("Songs") }
-                itemsIndexed(songs) { index, song ->
-                    SongRow(
-                        song = song,
-                        starred = starred.contains(song.id),
-                        onToggleStar = { vm.toggleStar(song.id) },
-                        onClick = { vm.playSongs(songs, index) }
+                item {
+                    PlayAllHeader(
+                        "Songs (${songs.size})",
+                        onPlay = { vm.playSearchSongs(false) },
+                        onShuffle = { vm.playSearchSongs(true) }
                     )
+                }
+                itemsIndexed(songs) { index, song ->
+                    SongItem(vm, nav, song, songs, index, showIndex = false)
                 }
             }
             item { Spacer(Modifier.height(24.dp)) }
