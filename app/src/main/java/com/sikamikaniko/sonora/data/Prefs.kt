@@ -50,6 +50,11 @@ class Prefs(context: Context) {
         get() = sp.getString("aiLang", "English") ?: "English"
         set(v) = sp.edit().putString("aiLang", v).apply()
 
+    /** Saved AI mixes, serialised as a JSON array. */
+    var aiMixesJson: String
+        get() = sp.getString("aiMixes", "[]") ?: "[]"
+        set(v) = sp.edit().putString("aiMixes", v).apply()
+
     /** Recent search queries, most-recent first (newline-delimited). */
     var recentSearches: List<String>
         get() = sp.getString("recentSearches", "")?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()

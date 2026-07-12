@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Radio
@@ -68,6 +69,7 @@ fun AskScreen(vm: SonoraViewModel, nav: NavController) {
     val busy by vm.aiBusy.collectAsState()
     val status by vm.aiStatus.collectAsState()
     val radio by vm.radio.collectAsState()
+    val lastPrompt by vm.lastDjPrompt.collectAsState()
     val ready = enabled && baseUrl.isNotBlank() && model.isNotBlank()
     val brand = LocalBrandBrush.current
     var prompt by remember { mutableStateOf("") }
@@ -158,6 +160,21 @@ fun AskScreen(vm: SonoraViewModel, nav: NavController) {
             status?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(6.dp))
+            }
+            if (lastPrompt != null && !busy) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(brand)
+                        .clickable { vm.saveCurrentAsMix() }
+                        .padding(horizontal = 16.dp, vertical = 9.dp)
+                ) {
+                    Icon(Icons.Filled.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("Save as a mix on Home", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(8.dp))
             }
 
             Spacer(Modifier.height(10.dp))

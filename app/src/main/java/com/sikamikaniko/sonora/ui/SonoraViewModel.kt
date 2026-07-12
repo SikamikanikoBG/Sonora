@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.sikamikaniko.sonora.data.AiClient
+import com.sikamikaniko.sonora.data.AiMix
 import com.sikamikaniko.sonora.data.Album
 import com.sikamikaniko.sonora.data.AlbumWithSongs
 import com.sikamikaniko.sonora.data.ArtPalette
@@ -35,6 +36,7 @@ import com.sikamikaniko.sonora.data.Subsonic
 import com.sikamikaniko.sonora.data.Updater
 import com.sikamikaniko.sonora.playback.PlaybackService
 import com.sikamikaniko.sonora.playback.PlayerCache
+import java.util.UUID
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -173,6 +175,53 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     private val _aiStreaming = MutableStateFlow(false)
     val aiStreaming: StateFlow<Boolean> = _aiStreaming.asStateFlow()
 
+    // Saved AI mixes (criteria-as-query) + last DJ prompt so it can be saved from a moment
+    private val _mixes = MutableStateFlow(loadMixes())
+    val mixes: StateFlow<List<AiMix>> = _mixes.asStateFlow()
+    private val _lastDjPrompt = MutableStateFlow<String?>(null)
+    val lastDjPrompt: StateFlow<String?> = _lastDjPrompt.asStateFlow()
+
+    private fun loadMixes(): List<AiMix> = try {
+        aiGson.fromJson(prefs.aiMixesJson, Array<AiMix>::class.java)?.toList() ?: emptyList()
+    } catch (_: Exception) { emptyList() }
+    private fun persistMixes() { prefs.aiMixesJson = aiGson.toJson(_mixes.value) }
+
+    fun saveMix(criteria: String) {
+        val c = criteria.trim()
+        if (c.isBlank()) return
+        val mix = AiMix(UUID.randomUUID().toString(), mixName(c), mixEmoji(c), c)
+        _mixes.value = _mixes.value + mix
+        persistMixes()
+        _toast.value = "Saved “${mix.name}”"
+    }
+    fun saveCurrentAsMix() { _lastDjPrompt.value?.let { saveMix(it) } }
+    fun deleteMix(id: String) { _mixes.value = _mixes.value.filter { it.id != id }; persistMixes() }
+    fun renameMix(id: String, name: String) {
+        _mixes.value = _mixes.value.map { if (it.id == id) it.copy(name = name.trim().ifBlank { it.name }) else it }
+        persistMixes()
+    }
+    fun playMix(mix: AiMix) = aiDj(mix.criteria)
+
+    private fun mixName(c: String): String =
+        c.trim().replaceFirstChar { it.uppercase() }.take(40)
+
+    private fun mixEmoji(c: String): String {
+        val t = c.lowercase()
+        return when {
+            listOf("cod", "program", "dev").any { t.contains(it) } -> "💻"
+            listOf("gym", "workout", "run", "rage", "hype", "energy").any { t.contains(it) } -> "🔥"
+            listOf("study", "focus", "concentrat").any { t.contains(it) } -> "📚"
+            listOf("chill", "relax", "calm", "mellow").any { t.contains(it) } -> "🌙"
+            listOf("jazz").any { t.contains(it) } -> "🎷"
+            listOf("party", "dance", "club").any { t.contains(it) } -> "🎉"
+            listOf("rain", "cozy", "autumn", "coffee").any { t.contains(it) } -> "🌧️"
+            listOf("love", "romance", "sad").any { t.contains(it) } -> "💜"
+            listOf("sleep", "night", "ambient").any { t.contains(it) } -> "😴"
+            listOf("classic", "orchestra", "piano").any { t.contains(it) } -> "🎻"
+            else -> "✨"
+        }
+    }
+
     val aiReady: Boolean
         get() = _aiEnabled.value && _aiBaseUrl.value.isNotBlank() && _aiModel.value.isNotBlank()
 
@@ -253,6 +302,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             val songs = gatherSongs(albums).shuffled()
             if (songs.isEmpty()) { _aiStatus.value = "No playable tracks found"; return@launch }
             _aiStatus.value = "Playing ${songs.size} tracks · ${albums.size} albums"
+            _lastDjPrompt.value = prompt
             playSongs(songs, 0)
         } catch (e: Exception) {
             _aiStatus.value = "AI error — check your endpoint/model"
@@ -293,16 +343,40 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** AI insights about the current artist/album (streaming). */
-    fun aiInsights() = viewModelScope.launch {
+    /** AI insights about the current music. topic = song | album | artist | era | songwriter. */
+    fun aiInsights(topic: String = "song") = viewModelScope.launch {
         if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
         _aiText.value = ""
         _aiStreaming.value = true
-        val sys = "You are a concise, knowledgeable music writer. Write 3-4 sentences. " +
-            "If you are unsure of facts, stay general and brief. Plain text, no markdown."
-        val user = "Tell me about the artist \"${_artist.value ?: ""}\"" +
-            (_albumTitle.value?.let { ", focusing on the album \"$it\"" } ?: "") + "."
+        val t = _title.value ?: ""
+        val ar = _artist.value ?: ""
+        val al = _albumTitle.value ?: ""
+        val sys = "You are a sharp, friendly music writer. 3-4 sentences, plain text, no markdown. " +
+            "Favour interesting connections (samples, influences, who-inspired-whom, cultural context) over dry facts. " +
+            "If unsure of a fact, stay general and say so briefly."
+        val user = when (topic) {
+            "album" -> "Tell me about the album \"$al\" by $ar."
+            "artist" -> "Tell me about the artist $ar — their sound, importance, and who they connect to."
+            "era" -> "Place the song \"$t\" by $ar in its era, scene and genre — what was happening around it."
+            "songwriter" -> "Who wrote, composed or produced \"$t\" by $ar, and any notable story behind it? If unknown, say so briefly."
+            else -> "Tell me about the song \"$t\" by $ar — its story, meaning, or how it was made."
+        }
         AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user))) { tok ->
+            _aiText.value += tok
+        }
+        _aiStreaming.value = false
+    }
+
+    /** Free-form question about the currently playing music (streaming). */
+    fun aiAsk(question: String) = viewModelScope.launch {
+        if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
+        if (question.isBlank()) return@launch
+        _aiText.value = ""
+        _aiStreaming.value = true
+        val ctx = "The user is listening to \"${_title.value ?: ""}\" by ${_artist.value ?: ""}" +
+            (_albumTitle.value?.let { " (album \"$it\")" } ?: "") + "."
+        val sys = "You are a knowledgeable, friendly music companion. Answer briefly (2-4 sentences), plain text. Be honest if unsure."
+        AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", "$ctx Question: $question"))) { tok ->
             _aiText.value += tok
         }
         _aiStreaming.value = false
