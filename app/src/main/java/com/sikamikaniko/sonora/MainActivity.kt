@@ -25,8 +25,8 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val vm: SonoraViewModel = viewModel()
-            val dynamic by vm.dynamicColor.collectAsState()
-            SonoraTheme(dynamicColor = dynamic) {
+            val theme by vm.appTheme.collectAsState()
+            SonoraTheme(theme) {
                 SonoraRoot(vm)
             }
         }

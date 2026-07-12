@@ -85,6 +85,13 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Appearance / settings ----
     private val _dynamicColor = MutableStateFlow(prefs.dynamicColor)
     val dynamicColor: StateFlow<Boolean> = _dynamicColor.asStateFlow()
+
+    private val _appTheme = MutableStateFlow(
+        runCatching { AppTheme.valueOf(prefs.themeName) }.getOrDefault(AppTheme.MIDNIGHT)
+    )
+    val appTheme: StateFlow<AppTheme> = _appTheme.asStateFlow()
+    fun setTheme(t: AppTheme) { prefs.themeName = t.name; _appTheme.value = t }
+
     private val _cacheBytes = MutableStateFlow(0L)
     val cacheBytes: StateFlow<Long> = _cacheBytes.asStateFlow()
 

@@ -1,9 +1,22 @@
 package com.sikamikaniko.sonora.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,15 +27,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
@@ -38,7 +53,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -48,8 +62,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,7 +80,43 @@ import com.sikamikaniko.sonora.data.Album
 import com.sikamikaniko.sonora.data.Song
 import com.sikamikaniko.sonora.data.Subsonic
 
+// ---------- shared motion helpers ----------
+
+/** Gentle tactile press-scale bound to an [interactionSource]. */
+@Composable
+private fun rememberPressScale(interactionSource: MutableInteractionSource): Float {
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.955f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "pressScale"
+    )
+    return scale
+}
+
 // ---------- artwork ----------
+
+@Composable
+private fun ArtPlaceholder(modifier: Modifier = Modifier, iconSize: Dp = 28.dp) {
+    Box(
+        modifier = modifier.background(
+            Brush.linearGradient(
+                listOf(
+                    MaterialTheme.colorScheme.surfaceVariant,
+                    MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+            )
+        ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            Icons.Filled.MusicNote,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+            modifier = Modifier.size(iconSize)
+        )
+    }
+}
 
 @Composable
 fun CoverArt(coverId: String?, modifier: Modifier = Modifier, corner: Dp = 12.dp, requestPx: Int = 512) {
@@ -71,17 +126,19 @@ fun CoverArt(coverId: String?, modifier: Modifier = Modifier, corner: Dp = 12.dp
 @Composable
 fun UrlArt(url: String?, modifier: Modifier = Modifier, corner: Dp = 12.dp) {
     Box(
-        modifier = modifier.clip(RoundedCornerShape(corner)).background(MaterialTheme.colorScheme.surfaceVariant),
+        modifier = modifier
+            .clip(RoundedCornerShape(corner))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {
         if (url.isNullOrBlank()) {
-            Icon(Icons.Filled.MusicNote, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            ArtPlaceholder(Modifier.fillMaxSize())
         } else {
             SubcomposeAsyncImage(
                 model = url, contentDescription = null, contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
-                loading = { Icon(Icons.Filled.MusicNote, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                error = { Icon(Icons.Filled.MusicNote, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                loading = { ArtPlaceholder(Modifier.fillMaxSize()) },
+                error = { ArtPlaceholder(Modifier.fillMaxSize()) }
             )
         }
     }
@@ -90,6 +147,37 @@ fun UrlArt(url: String?, modifier: Modifier = Modifier, corner: Dp = 12.dp) {
 @Composable
 fun Artwork(coverId: String?, size: Dp, corner: Dp = 10.dp, requestPx: Int = 512) {
     CoverArt(coverId, Modifier.size(size), corner, requestPx)
+}
+
+/** Premium framed cover: soft shadow, hairline ring, gentle bottom scrim, optional select badge. */
+@Composable
+private fun AlbumCover(
+    coverId: String?,
+    selectionActive: Boolean,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    corner: Dp = 16.dp
+) {
+    Box(
+        modifier = modifier
+            .shadow(12.dp, RoundedCornerShape(corner), clip = false)
+            .clip(RoundedCornerShape(corner))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), RoundedCornerShape(corner))
+    ) {
+        CoverArt(coverId, Modifier.fillMaxSize(), corner = corner)
+        // gentle grounding scrim for depth + badge legibility
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    colorStops = arrayOf(
+                        0.55f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.24f)
+                    )
+                )
+            )
+        )
+        if (selectionActive) SelectBadge(selected, Modifier.align(Alignment.TopEnd).padding(8.dp))
+    }
 }
 
 // ---------- album cards ----------
@@ -103,16 +191,36 @@ fun AlbumGridCard(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val scale = rememberPressScale(interaction)
     Column(
-        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .combinedClickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .padding(4.dp)
     ) {
-        Box {
-            CoverArt(album.coverArt, Modifier.fillMaxWidth().aspectRatio(1f))
-            if (selectionActive) SelectBadge(selected, Modifier.align(Alignment.TopEnd).padding(6.dp))
-        }
-        Spacer(Modifier.size(8.dp))
-        Text(album.name ?: "Unknown album", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(album.artist ?: "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        AlbumCover(
+            coverId = album.coverArt,
+            selectionActive = selectionActive,
+            selected = selected,
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f).scale(scale)
+        )
+        Spacer(Modifier.size(10.dp))
+        Text(
+            album.name ?: "Unknown album",
+            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
+            maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            album.artist ?: "",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -125,14 +233,37 @@ fun AlbumRailCard(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
-    Column(modifier = Modifier.width(148.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
-        Box {
-            CoverArt(album.coverArt, Modifier.size(148.dp))
-            if (selectionActive) SelectBadge(selected, Modifier.align(Alignment.TopEnd).padding(6.dp))
-        }
-        Spacer(Modifier.size(6.dp))
-        Text(album.name ?: "Unknown album", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(album.artist ?: "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val interaction = remember { MutableInteractionSource() }
+    val scale = rememberPressScale(interaction)
+    Column(
+        modifier = Modifier
+            .width(156.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .combinedClickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .padding(4.dp)
+    ) {
+        AlbumCover(
+            coverId = album.coverArt,
+            selectionActive = selectionActive,
+            selected = selected,
+            modifier = Modifier.size(148.dp).scale(scale)
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(
+            album.name ?: "Unknown album",
+            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
+            maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            album.artist ?: "",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -164,14 +295,29 @@ fun AlbumRailItem(vm: SonoraViewModel, nav: NavController, album: Album) {
 
 @Composable
 private fun SelectBadge(selected: Boolean, modifier: Modifier = Modifier) {
+    val scale by animateFloatAsState(
+        targetValue = if (selected) 1f else 0.9f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+        label = "selBadge"
+    )
     Box(
-        modifier = modifier.size(26.dp).clip(RoundedCornerShape(50)).background(Color(0x99000000)),
+        modifier = modifier
+            .size(28.dp)
+            .scale(scale)
+            .clip(CircleShape)
+            .background(if (selected) MaterialTheme.colorScheme.primary else Color(0x55000000))
+            .border(
+                1.5.dp,
+                if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.85f),
+                CircleShape
+            ),
         contentAlignment = Alignment.Center
     ) {
         Icon(
-            if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+            if (selected) Icons.Filled.Check else Icons.Filled.RadioButtonUnchecked,
             contentDescription = null,
-            tint = if (selected) MaterialTheme.colorScheme.primary else Color.White
+            tint = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White,
+            modifier = Modifier.size(if (selected) 18.dp else 20.dp)
         )
     }
 }
@@ -201,32 +347,65 @@ fun SongRow(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val rowBg by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent,
+        animationSpec = tween(220),
+        label = "rowBg"
+    )
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(rowBg)
+            .combinedClickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .padding(horizontal = 8.dp, vertical = 8.dp)
     ) {
         if (selectionActive) {
+            val iconScale by animateFloatAsState(
+                targetValue = if (selected) 1f else 0.86f,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+                label = "selIcon"
+            )
             Icon(
                 if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
                 contentDescription = null,
                 tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(24.dp).scale(iconScale)
             )
-            Spacer(Modifier.size(10.dp))
+            Spacer(Modifier.size(12.dp))
         } else if (index != null) {
-            Text("$index", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.width(26.dp))
-            Spacer(Modifier.size(6.dp))
+            Text(
+                "$index",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.width(28.dp)
+            )
+            Spacer(Modifier.size(8.dp))
         } else {
-            Artwork(song.coverArt, size = 44.dp)
+            Artwork(song.coverArt, size = 46.dp, corner = 12.dp)
             Spacer(Modifier.size(12.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(song.title ?: "Unknown", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(song.artist ?: "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                song.title ?: "Unknown",
+                style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.size(1.dp))
+            Text(
+                song.artist ?: "",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
         }
         if (!selectionActive) {
             if (starred) {
@@ -234,7 +413,12 @@ fun SongRow(
                 Spacer(Modifier.size(4.dp))
             }
             if (actions != null) SongMenu(starred, actions)
-            else Text(formatSeconds(song.duration), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else Text(
+                formatSeconds(song.duration),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 6.dp)
+            )
         }
     }
 }
@@ -331,15 +515,41 @@ fun SongItem(
 
 @Composable
 fun SelectionBar(count: Int, mode: SelMode, vm: SonoraViewModel) {
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp)) {
-            IconButton(onClick = { vm.clearSelection() }) { Icon(Icons.Filled.Close, "Cancel") }
-            Text("$count selected", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
-            IconButton(onClick = { vm.playSelection(false) }) { Icon(Icons.Filled.PlayArrow, "Play") }
-            IconButton(onClick = { vm.playSelection(true) }) { Icon(Icons.Filled.Shuffle, "Shuffle") }
-            IconButton(onClick = { vm.playNextSelection() }) { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, "Play next") }
-            IconButton(onClick = { vm.queueSelection() }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Add to queue") }
-            IconButton(onClick = { vm.openPlaylistPickerFromSelection() }) { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Add to playlist") }
+    val haptic = LocalHapticFeedback.current
+    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = RoundedCornerShape(24.dp),
+            tonalElevation = 3.dp,
+            shadowElevation = 12.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp)
+            ) {
+                IconButton(onClick = { vm.clearSelection() }) { Icon(Icons.Filled.Close, "Cancel") }
+                Text(
+                    "$count selected",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                IconButton(onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    vm.playSelection(false)
+                }) { Icon(Icons.Filled.PlayArrow, "Play") }
+                IconButton(onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    vm.playSelection(true)
+                }) { Icon(Icons.Filled.Shuffle, "Shuffle") }
+                IconButton(onClick = { vm.playNextSelection() }) { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, "Play next") }
+                IconButton(onClick = { vm.queueSelection() }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Add to queue") }
+                IconButton(onClick = { vm.openPlaylistPickerFromSelection() }) { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Add to playlist") }
+            }
         }
     }
 }
@@ -348,29 +558,97 @@ fun SelectionBar(count: Int, mode: SelMode, vm: SonoraViewModel) {
 
 @Composable
 fun SectionHeader(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 8.dp))
+    val brand = LocalBrandBrush.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 8.dp)
+    ) {
+        Box(
+            Modifier.size(width = 4.dp, height = 18.dp)
+                .clip(RoundedCornerShape(50))
+                .background(brand)
+        )
+        Spacer(Modifier.size(10.dp))
+        Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    }
 }
 
 @Composable
 fun PlayAllHeader(title: String, onPlay: () -> Unit, onShuffle: () -> Unit) {
+    val brand = LocalBrandBrush.current
+    val haptic = LocalHapticFeedback.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 2.dp)
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 4.dp)
     ) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-        TextButton(onClick = onPlay) {
-            Icon(Icons.Filled.PlayArrow, null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.size(4.dp))
-            Text("Play all")
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(brand)
+                .clickable {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onPlay()
+                }
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Icon(
+                Icons.Filled.PlayArrow, null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.size(6.dp))
+            Text(
+                "Play all",
+                color = MaterialTheme.colorScheme.onPrimary,
+                style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold
+            )
         }
+        Spacer(Modifier.size(4.dp))
         IconButton(onClick = onShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle all") }
     }
 }
 
 @Composable
 fun CenterMessage(text: String) {
-    Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+    val infinite = rememberInfiniteTransition(label = "empty")
+    val pulse by infinite.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(tween(2200), RepeatMode.Reverse),
+        label = "pulse"
+    )
+    Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(104.dp)
+                    .scale(pulse)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.MusicNote,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                    modifier = Modifier.size(44.dp)
+                )
+            }
+            Spacer(Modifier.size(20.dp))
+            Text(
+                text,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
     }
 }
 

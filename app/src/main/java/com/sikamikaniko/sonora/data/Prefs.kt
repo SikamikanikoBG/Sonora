@@ -22,6 +22,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("dynamicColor", false)
         set(v) = sp.edit().putBoolean("dynamicColor", v).apply()
 
+    /** Selected Aurora theme, stored by AppTheme.name (default "MIDNIGHT"). */
+    var themeName: String
+        get() = sp.getString("themeName", "MIDNIGHT") ?: "MIDNIGHT"
+        set(v) = sp.edit().putString("themeName", v).apply()
+
     val isConfigured: Boolean
         get() = !baseUrl.isNullOrBlank() && !username.isNullOrBlank() && !password.isNullOrBlank()
 
