@@ -32,7 +32,7 @@ object OnlineLyrics {
     suspend fun fetch(artist: String?, title: String?, album: String?, durationSec: Int): String? =
         withContext(Dispatchers.IO) {
             if (artist.isNullOrBlank() || title.isNullOrBlank()) return@withContext null
-            val a = artist.substringBefore(" feat", ignoreCase = true).trim()
+            val a = artist.replace(Regex("(?i)\\s+feat\\.?.*$"), "").trim()
             // 1) exact get on title+artist (most reliable single hit)
             getExact(title, a, null, 0)?.let { return@withContext it }
             // 2) exact get including album + duration (if we have them)
