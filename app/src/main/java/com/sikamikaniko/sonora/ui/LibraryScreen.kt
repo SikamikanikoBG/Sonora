@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -114,7 +115,7 @@ private fun AlbumGrid(albums: List<Album>, onOpen: (Album) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxSize()
     ) {
-        androidx.compose.foundation.lazy.grid.items(albums, key = { it.id }) { album ->
+        gridItems(albums, key = { it.id }) { album ->
             AlbumCard(album, onClick = { onOpen(album) })
         }
     }
