@@ -15,6 +15,8 @@ import androidx.media3.session.SessionToken
 import com.sikamikaniko.sonora.BuildConfig
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import com.google.gson.Gson
+import com.sikamikaniko.sonora.data.AiClient
 import com.sikamikaniko.sonora.data.Album
 import com.sikamikaniko.sonora.data.AlbumWithSongs
 import com.sikamikaniko.sonora.data.ArtPalette
@@ -134,6 +136,164 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _scanning.value = false
     }
 
+    // ---- Recent searches ----
+    private val _recentSearches = MutableStateFlow(prefs.recentSearches)
+    val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
+    fun addRecentSearch(q: String) {
+        val t = q.trim()
+        if (t.isBlank()) return
+        val list = (listOf(t) + _recentSearches.value.filter { !it.equals(t, true) }).take(12)
+        prefs.recentSearches = list
+        _recentSearches.value = list
+    }
+    fun clearRecentSearches() {
+        prefs.recentSearches = emptyList()
+        _recentSearches.value = emptyList()
+    }
+
+    // ---- AI ----
+    private val aiGson = Gson()
+    private val _aiEnabled = MutableStateFlow(prefs.aiEnabled)
+    val aiEnabled: StateFlow<Boolean> = _aiEnabled.asStateFlow()
+    private val _aiBaseUrl = MutableStateFlow(prefs.aiBaseUrl)
+    val aiBaseUrl: StateFlow<String> = _aiBaseUrl.asStateFlow()
+    private val _aiModel = MutableStateFlow(prefs.aiModel)
+    val aiModel: StateFlow<String> = _aiModel.asStateFlow()
+    private val _aiLang = MutableStateFlow(prefs.aiLang)
+    val aiLang: StateFlow<String> = _aiLang.asStateFlow()
+    private val _aiModels = MutableStateFlow<List<String>>(emptyList())
+    val aiModels: StateFlow<List<String>> = _aiModels.asStateFlow()
+    private val _aiBusy = MutableStateFlow(false)
+    val aiBusy: StateFlow<Boolean> = _aiBusy.asStateFlow()
+    private val _aiStatus = MutableStateFlow<String?>(null)
+    val aiStatus: StateFlow<String?> = _aiStatus.asStateFlow()
+    private val _aiText = MutableStateFlow("")
+    val aiText: StateFlow<String> = _aiText.asStateFlow()
+    private val _aiStreaming = MutableStateFlow(false)
+    val aiStreaming: StateFlow<Boolean> = _aiStreaming.asStateFlow()
+
+    val aiReady: Boolean
+        get() = _aiEnabled.value && _aiBaseUrl.value.isNotBlank() && _aiModel.value.isNotBlank()
+
+    fun setAiEnabled(v: Boolean) { prefs.aiEnabled = v; _aiEnabled.value = v }
+    fun setAiBaseUrl(v: String) { prefs.aiBaseUrl = v; _aiBaseUrl.value = v }
+    fun setAiModel(v: String) { prefs.aiModel = v; _aiModel.value = v }
+    fun setAiLang(v: String) { prefs.aiLang = v; _aiLang.value = v }
+    fun loadAiModels() = viewModelScope.launch {
+        _aiModels.value = AiClient.listModels(_aiBaseUrl.value)
+    }
+    fun clearAiText() { _aiText.value = ""; _aiStreaming.value = false }
+
+    private data class DjResult(val albumIds: List<String>? = null)
+
+    private suspend fun pickAlbums(prompt: String, count: Int): List<Album> {
+        val lib = _albums.value
+        if (lib.isEmpty()) return emptyList()
+        val catalog = lib.joinToString("\n") { a ->
+            "${a.id} | ${a.artist ?: "?"} — ${a.name ?: "?"}${a.year?.let { " ($it)" } ?: ""}"
+        }
+        val sys = "You are an expert music DJ. From the user's library below (format: id | Artist — Album), " +
+            "choose about $count albums that best fit the request. Reply ONLY with JSON: {\"albumIds\":[\"id\",...]}. " +
+            "Use ONLY ids that appear in the library."
+        val user = "Request: $prompt\n\nLibrary:\n$catalog"
+        val json = AiClient.chat(
+            _aiBaseUrl.value, _aiModel.value,
+            listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user)),
+            json = true
+        ) ?: return emptyList()
+        val ids = try { aiGson.fromJson(json, DjResult::class.java)?.albumIds } catch (_: Exception) { null } ?: return emptyList()
+        val byId = lib.associateBy { it.id }
+        return ids.mapNotNull { byId[it] }
+    }
+
+    private suspend fun gatherSongs(albums: List<Album>): List<Song> =
+        albums.flatMap { Subsonic.api?.getAlbum(it.id)?.response?.album?.song ?: emptyList() }
+
+    /** AI DJ: turn a natural-language request into a playing queue. */
+    fun aiDj(prompt: String) = viewModelScope.launch {
+        if (!aiReady) { _aiStatus.value = "Set up AI in Settings first"; return@launch }
+        if (prompt.isBlank()) return@launch
+        _aiBusy.value = true
+        _aiStatus.value = "Thinking…"
+        try {
+            val albums = pickAlbums(prompt, 10)
+            if (albums.isEmpty()) { _aiStatus.value = "Couldn't find matches for that"; return@launch }
+            _aiStatus.value = "Gathering tracks…"
+            val songs = gatherSongs(albums).shuffled()
+            if (songs.isEmpty()) { _aiStatus.value = "No playable tracks found"; return@launch }
+            _aiStatus.value = "Playing ${songs.size} tracks · ${albums.size} albums"
+            playSongs(songs, 0)
+        } catch (e: Exception) {
+            _aiStatus.value = "AI error — check your endpoint/model"
+        } finally {
+            _aiBusy.value = false
+        }
+    }
+
+    // ---- Smart Radio ----
+    private val _radio = MutableStateFlow(false)
+    val radio: StateFlow<Boolean> = _radio.asStateFlow()
+    private var radioSeed: String? = null
+    private var radioBusy = false
+
+    fun setRadio(v: Boolean) { _radio.value = v; if (v) maybeExtendRadio() }
+    fun toggleRadio() = setRadio(!_radio.value)
+    fun startRadioFromCurrent() {
+        radioSeed = "${_artist.value ?: ""} — ${_title.value ?: ""}"
+        setRadio(true)
+    }
+
+    private fun maybeExtendRadio() {
+        val c = controller ?: return
+        if (!_radio.value || radioBusy || !aiReady) return
+        val remaining = c.mediaItemCount - (c.currentMediaItemIndex + 1)
+        if (remaining > 3) return
+        radioBusy = true
+        viewModelScope.launch {
+            try {
+                val seed = radioSeed ?: "${_artist.value ?: ""} ${_albumTitle.value ?: ""}"
+                val albums = pickAlbums("Music similar in style and mood to: $seed. Keep it varied.", 4)
+                val songs = gatherSongs(albums).shuffled().take(20)
+                if (songs.isNotEmpty()) addToQueue(songs)
+            } catch (_: Exception) {
+            } finally {
+                radioBusy = false
+            }
+        }
+    }
+
+    /** AI insights about the current artist/album (streaming). */
+    fun aiInsights() = viewModelScope.launch {
+        if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
+        _aiText.value = ""
+        _aiStreaming.value = true
+        val sys = "You are a concise, knowledgeable music writer. Write 3-4 sentences. " +
+            "If you are unsure of facts, stay general and brief. Plain text, no markdown."
+        val user = "Tell me about the artist \"${_artist.value ?: ""}\"" +
+            (_albumTitle.value?.let { ", focusing on the album \"$it\"" } ?: "") + "."
+        AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user))) { tok ->
+            _aiText.value += tok
+        }
+        _aiStreaming.value = false
+    }
+
+    /** AI on lyrics: mode = "translate" or "explain" (streaming). */
+    fun aiLyrics(mode: String) = viewModelScope.launch {
+        if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
+        val lyr = _lyrics.value
+        if (lyr.isNullOrBlank()) { _aiText.value = "No lyrics to work with yet."; return@launch }
+        _aiText.value = ""
+        _aiStreaming.value = true
+        val prompt = if (mode == "translate")
+            "Translate these song lyrics to ${_aiLang.value}. Keep the line breaks. Output only the translation.\n\n$lyr"
+        else
+            "In a short paragraph, explain the meaning and themes of these song lyrics. Plain text.\n\n$lyr"
+        AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("user", prompt))) { tok ->
+            _aiText.value += tok
+        }
+        _aiStreaming.value = false
+    }
+
     private val _cacheBytes = MutableStateFlow(0L)
     val cacheBytes: StateFlow<Long> = _cacheBytes.asStateFlow()
 
@@ -248,6 +408,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             updateNowPlaying()
             rebuildQueue()
             mediaItem?.mediaId?.let { scrobble(it) }
+            if (_radio.value) maybeExtendRadio()
         }
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
             rebuildQueue()

@@ -60,6 +60,7 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     var showPlayer by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
+    var showInsights by remember { mutableStateOf(false) }
     val tabs = listOf(Tab.Home, Tab.Library, Tab.Search, Tab.Playlists)
     val selCount = if (selMode == SelMode.SONGS) selectedSongs.size else selectedAlbums.size
 
@@ -112,6 +113,7 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
                 GenreScreen(vm, entry.arguments?.getString("name") ?: "", nav)
             }
             composable("settings") { SettingsScreen(vm, nav) }
+            composable("ai") { AskScreen(vm, nav) }
         }
     }
 
@@ -121,6 +123,7 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             onBack = { showPlayer = false },
             onOpenQueue = { showQueue = true },
             onOpenLyrics = { showLyrics = true },
+            onOpenInsights = { showInsights = true },
             onGoToAlbum = { id -> showPlayer = false; nav.navigate("album/$id") },
             onGoToArtist = { id -> showPlayer = false; nav.navigate("artist/$id") }
         )
@@ -131,8 +134,13 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     if (showLyrics) {
         LyricsScreen(vm, onBack = { showLyrics = false })
     }
-    BackHandler(enabled = showPlayer || showQueue || showLyrics || selMode != SelMode.NONE) {
+    if (showInsights) {
+        LaunchedEffect(Unit) { vm.aiInsights() }
+        InsightsScreen(vm, onBack = { showInsights = false; vm.clearAiText() })
+    }
+    BackHandler(enabled = showPlayer || showQueue || showLyrics || showInsights || selMode != SelMode.NONE) {
         when {
+            showInsights -> { showInsights = false; vm.clearAiText() }
             showLyrics -> showLyrics = false
             showQueue -> showQueue = false
             showPlayer -> showPlayer = false

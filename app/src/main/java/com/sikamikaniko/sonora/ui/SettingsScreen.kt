@@ -45,7 +45,11 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -125,6 +129,64 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                     }
                     androidx.compose.material3.Switch(checked = artTheme, onCheckedChange = { vm.setArtTheme(it) })
                 }
+            }
+
+            // ---- AI ----
+            SectionCard(title = "AI", icon = Icons.Filled.AutoAwesome) {
+                val aiEnabled by vm.aiEnabled.collectAsState()
+                val aiBaseUrl by vm.aiBaseUrl.collectAsState()
+                val aiModel by vm.aiModel.collectAsState()
+                val aiLang by vm.aiLang.collectAsState()
+                val models by vm.aiModels.collectAsState()
+                var modelMenu by remember { mutableStateOf(false) }
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Enable AI features")
+                        Text("AI DJ, Radio, insights & lyric tools", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    androidx.compose.material3.Switch(checked = aiEnabled, onCheckedChange = { vm.setAiEnabled(it) })
+                }
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = aiBaseUrl,
+                    onValueChange = { vm.setAiBaseUrl(it) },
+                    label = { Text("Ollama server URL") },
+                    placeholder = { Text("http://your-server:11434") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                Box {
+                    OutlinedButton(
+                        onClick = { vm.loadAiModels(); modelMenu = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (aiModel.isBlank()) "Pick a model" else aiModel)
+                    }
+                    androidx.compose.material3.DropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
+                        if (models.isEmpty()) {
+                            androidx.compose.material3.DropdownMenuItem(text = { Text("No models found — check the URL") }, onClick = { modelMenu = false })
+                        }
+                        models.forEach { m ->
+                            androidx.compose.material3.DropdownMenuItem(text = { Text(m) }, onClick = { vm.setAiModel(m); modelMenu = false })
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = aiLang,
+                    onValueChange = { vm.setAiLang(it) },
+                    label = { Text("Translate lyrics to") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Runs on your own Ollama server — private, nothing sent to the cloud.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             // ---- Storage ----

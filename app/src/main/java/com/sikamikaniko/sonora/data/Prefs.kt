@@ -31,6 +31,30 @@ class Prefs(context: Context) {
         get() = sp.getString("themeName", "MIDNIGHT") ?: "MIDNIGHT"
         set(v) = sp.edit().putString("themeName", v).apply()
 
+    // ---- AI (all user-configured; nothing hardcoded) ----
+    var aiEnabled: Boolean
+        get() = sp.getBoolean("aiEnabled", false)
+        set(v) = sp.edit().putBoolean("aiEnabled", v).apply()
+
+    /** Ollama-compatible base URL, e.g. http://your-server:11434 */
+    var aiBaseUrl: String
+        get() = sp.getString("aiBaseUrl", "") ?: ""
+        set(v) = sp.edit().putString("aiBaseUrl", v).apply()
+
+    var aiModel: String
+        get() = sp.getString("aiModel", "") ?: ""
+        set(v) = sp.edit().putString("aiModel", v).apply()
+
+    /** Target language for lyric translation. */
+    var aiLang: String
+        get() = sp.getString("aiLang", "English") ?: "English"
+        set(v) = sp.edit().putString("aiLang", v).apply()
+
+    /** Recent search queries, most-recent first (newline-delimited). */
+    var recentSearches: List<String>
+        get() = sp.getString("recentSearches", "")?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()
+        set(v) = sp.edit().putString("recentSearches", v.joinToString("\n")).apply()
+
     val isConfigured: Boolean
         get() = !baseUrl.isNullOrBlank() && !username.isNullOrBlank() && !password.isNullOrBlank()
 

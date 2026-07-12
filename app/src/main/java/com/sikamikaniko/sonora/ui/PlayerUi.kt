@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
@@ -185,6 +186,7 @@ fun NowPlayingScreen(
     onBack: () -> Unit,
     onOpenQueue: () -> Unit,
     onOpenLyrics: () -> Unit,
+    onOpenInsights: () -> Unit,
     onGoToAlbum: (String) -> Unit,
     onGoToArtist: (String) -> Unit
 ) {
@@ -254,6 +256,7 @@ fun NowPlayingScreen(
                         val q = URLEncoder.encode("${artist ?: ""} ${title ?: ""} chords", "UTF-8")
                         uriHandler.openUri("https://www.google.com/search?q=$q")
                     },
+                    onInsights = onOpenInsights,
                     onGoAlbum = { albumId?.let(onGoToAlbum) },
                     onGoArtist = { artistId?.let(onGoToArtist) }
                 )
@@ -526,6 +529,7 @@ private fun NpOverflow(
     hasArtist: Boolean,
     onLyrics: () -> Unit,
     onChords: () -> Unit,
+    onInsights: () -> Unit,
     onGoAlbum: () -> Unit,
     onGoArtist: () -> Unit
 ) {
@@ -533,6 +537,7 @@ private fun NpOverflow(
     Box {
         IconButton(onClick = { expanded = true }) { Icon(Icons.Filled.MoreVert, "More") }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("About this music") }, leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) }, onClick = { expanded = false; onInsights() })
             DropdownMenuItem(text = { Text("Lyrics") }, leadingIcon = { Icon(Icons.Filled.Lyrics, null) }, onClick = { expanded = false; onLyrics() })
             DropdownMenuItem(text = { Text("Guitar chords") }, leadingIcon = { Icon(Icons.Filled.MusicNote, null) }, onClick = { expanded = false; onChords() })
             if (hasAlbum) DropdownMenuItem(text = { Text("Go to album") }, leadingIcon = { Icon(Icons.Filled.Album, null) }, onClick = { expanded = false; onGoAlbum() })

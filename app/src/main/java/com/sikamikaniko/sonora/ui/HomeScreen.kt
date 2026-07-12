@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
@@ -52,6 +53,7 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
         item {
             HomeHeader(
                 brand = brand,
+                onAsk = { nav.navigate("ai") },
                 onShuffle = { vm.shuffleLibrary() },
                 onRefresh = { vm.refreshAll() },
                 onSettings = { nav.navigate("settings") }
@@ -68,6 +70,7 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
 @Composable
 private fun HomeHeader(
     brand: androidx.compose.ui.graphics.Brush,
+    onAsk: () -> Unit,
     onShuffle: () -> Unit,
     onRefresh: () -> Unit,
     onSettings: () -> Unit
@@ -90,6 +93,7 @@ private fun HomeHeader(
         Column(Modifier.fillMaxWidth()) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(greeting, style = MaterialTheme.typography.labelLarge, color = onBrand.copy(alpha = 0.85f), modifier = Modifier.weight(1f))
+                IconButton(onClick = onAsk) { Icon(Icons.Filled.AutoAwesome, "Ask Sonora", tint = onBrand) }
                 IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, "Refresh", tint = onBrand) }
                 IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Settings", tint = onBrand) }
             }
