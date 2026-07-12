@@ -8,11 +8,13 @@ import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,6 +39,7 @@ private sealed class Tab(val route: String, val label: String, val icon: ImageVe
 
 @Composable
 fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
+    UpdateDialog(vm)
     val loggedIn by vm.loggedIn.collectAsState()
     if (!loggedIn) {
         LoginScreen(vm)
@@ -103,4 +106,24 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             showPlayer -> showPlayer = false
         }
     }
+}
+
+@Composable
+private fun UpdateDialog(vm: SonoraViewModel) {
+    val update by vm.update.collectAsState()
+    val busy by vm.updateBusy.collectAsState()
+    val info = update ?: return
+    AlertDialog(
+        onDismissRequest = { if (!busy) vm.dismissUpdate() },
+        title = { Text("Update available") },
+        text = { Text("Sonora ${info.version} is available. Update now?") },
+        confirmButton = {
+            TextButton(onClick = { vm.downloadAndInstallUpdate() }, enabled = !busy) {
+                Text(if (busy) "Downloading…" else "Update")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { vm.dismissUpdate() }, enabled = !busy) { Text("Later") }
+        }
+    )
 }

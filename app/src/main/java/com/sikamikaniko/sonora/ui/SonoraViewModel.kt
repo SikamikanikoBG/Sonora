@@ -20,7 +20,9 @@ import com.sikamikaniko.sonora.data.PlaylistWithSongs
 import com.sikamikaniko.sonora.data.Prefs
 import com.sikamikaniko.sonora.data.SearchResult3
 import com.sikamikaniko.sonora.data.Song
+import com.sikamikaniko.sonora.BuildConfig
 import com.sikamikaniko.sonora.data.Subsonic
+import com.sikamikaniko.sonora.data.Updater
 import com.sikamikaniko.sonora.playback.PlaybackService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -126,6 +128,12 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     private val _sleepMinutesLeft = MutableStateFlow(0)
     val sleepMinutesLeft: StateFlow<Int> = _sleepMinutesLeft.asStateFlow()
 
+    // ---- Self-update ----
+    private val _update = MutableStateFlow<Updater.UpdateInfo?>(null)
+    val update: StateFlow<Updater.UpdateInfo?> = _update.asStateFlow()
+    private val _updateBusy = MutableStateFlow(false)
+    val updateBusy: StateFlow<Boolean> = _updateBusy.asStateFlow()
+
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) { _isPlaying.value = isPlaying }
         override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) { updateNowPlaying() }
@@ -148,6 +156,27 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         Subsonic.loadFrom(prefs)
         connectController()
         if (_loggedIn.value) refreshAll()
+        checkForUpdate()
+    }
+
+    fun checkForUpdate() {
+        viewModelScope.launch {
+            _update.value = Updater.check(BuildConfig.VERSION_NAME)
+        }
+    }
+
+    fun dismissUpdate() { _update.value = null }
+
+    fun downloadAndInstallUpdate() {
+        val info = _update.value ?: return
+        val ctx = getApplication<Application>()
+        viewModelScope.launch {
+            _updateBusy.value = true
+            val file = Updater.download(ctx, info.apkUrl)
+            _updateBusy.value = false
+            if (file != null) Updater.install(ctx, file)
+            else _error.value = "Update download failed"
+        }
     }
 
     private fun connectController() {

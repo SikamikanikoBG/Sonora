@@ -22,6 +22,7 @@ Built with Kotlin, Jetpack Compose (Material 3) and Media3/ExoPlayer.
 - **Full player** — shuffle, repeat (off/all/one), seek, favourite, sleep timer.
 - **Background playback** with lock-screen / notification controls and a proper media session (headset buttons, "audio becoming noisy" pause, audio focus).
 - **Smart caching** — streamed audio is cached (up to 1 GB), so replays are instant and recently played music survives a flaky connection.
+- **In-app updates** — Sonora checks GitHub on launch and offers a one-tap update when a new release is out (no Play Store needed). All release builds share one signing key so updates install cleanly.
 
 ## Publishing to Google Play
 
