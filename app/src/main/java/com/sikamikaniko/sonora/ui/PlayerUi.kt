@@ -173,7 +173,7 @@ fun MiniPlayer(vm: SonoraViewModel, onExpand: () -> Unit) {
 // transport FAB, refined seek bar and clearly-tinted controls.
 // ---------------------------------------------------------------------------
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlayingScreen(
     vm: SonoraViewModel,
