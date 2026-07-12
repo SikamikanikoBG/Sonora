@@ -25,9 +25,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Celebration
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -63,6 +75,7 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
     val random by vm.randomAlbums.collectAsState()
     val mixes by vm.mixes.collectAsState()
     val brand = LocalBrandBrush.current
+    val context = LocalContext.current
     var renaming by remember { mutableStateOf<AiMix?>(null) }
 
     renaming?.let { mix ->
@@ -94,7 +107,13 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(mixes, key = { it.id }) { mix ->
-                        MixCard(mix, brand, onPlay = { vm.playMix(mix) }, onRename = { renaming = mix }, onDelete = { vm.deleteMix(mix.id) })
+                        MixCard(
+                            mix, brand,
+                            onPlay = { vm.playMix(mix) },
+                            onRename = { renaming = mix },
+                            onDelete = { vm.deleteMix(mix.id) },
+                            onShare = { ShareUtil.shareMix(context, mix.name, mix.criteria) }
+                        )
                     }
                     item { NewMixCard { nav.navigate("ai") } }
                 }
@@ -156,26 +175,62 @@ private fun HomeHeader(
     }
 }
 
+private fun mixIcon(criteria: String): ImageVector {
+    val t = criteria.lowercase()
+    return when {
+        listOf("cod", "program", "dev").any { t.contains(it) } -> Icons.Filled.Code
+        listOf("gym", "workout", "run", "rage", "hype", "energy").any { t.contains(it) } -> Icons.Filled.FitnessCenter
+        listOf("study", "focus", "concentrat").any { t.contains(it) } -> Icons.Filled.MenuBook
+        listOf("chill", "relax", "calm", "mellow").any { t.contains(it) } -> Icons.Filled.DarkMode
+        listOf("party", "dance", "club").any { t.contains(it) } -> Icons.Filled.Celebration
+        listOf("love", "romance").any { t.contains(it) } -> Icons.Filled.Favorite
+        listOf("sleep", "night", "ambient").any { t.contains(it) } -> Icons.Filled.Bedtime
+        listOf("jazz", "classic", "orchestra", "piano").any { t.contains(it) } -> Icons.Filled.MusicNote
+        else -> Icons.Filled.GraphicEq
+    }
+}
+
+/** Compact, flat mix card — small gradient icon tile + name, in a horizontal row. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MixCard(mix: AiMix, brand: androidx.compose.ui.graphics.Brush, onPlay: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) {
+private fun MixCard(
+    mix: AiMix,
+    brand: androidx.compose.ui.graphics.Brush,
+    onPlay: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    onShare: () -> Unit
+) {
     var menu by remember { mutableStateOf(false) }
     Box {
-        Column(
-            Modifier
-                .width(150.dp)
-                .height(150.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(brand)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .width(184.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
                 .combinedClickable(onClick = onPlay, onLongClick = { menu = true })
-                .padding(14.dp)
+                .padding(10.dp)
         ) {
-            Text(mix.emoji, fontSize = 34.sp)
-            Spacer(Modifier.weight(1f))
-            Text(mix.name, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Box(
+                Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(brand),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(mixIcon(mix.criteria), null, tint = Color.White, modifier = Modifier.size(22.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                mix.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Play") }, onClick = { menu = false; onPlay() })
+            DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Filled.Share, null) }, onClick = { menu = false; onShare() })
             DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; onRename() })
             DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
         }
@@ -184,20 +239,23 @@ private fun MixCard(mix: AiMix, brand: androidx.compose.ui.graphics.Brush, onPla
 
 @Composable
 private fun NewMixCard(onClick: () -> Unit) {
-    Column(
-        Modifier
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
             .width(150.dp)
-            .height(150.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onClick)
-            .padding(14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .padding(10.dp)
     ) {
-        Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.height(8.dp))
-        Text("New AI mix", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Box(
+            Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.primary)
+        }
+        Spacer(Modifier.width(10.dp))
+        Text("New mix", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

@@ -55,13 +55,14 @@ private val TOPICS = listOf(
 fun InsightsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
     val text by vm.aiText.collectAsState()
     val streaming by vm.aiStreaming.collectAsState()
-    val artist by vm.artist.collectAsState()
+    val target by vm.insightTarget.collectAsState()
+    val heading = target?.title ?: target?.artist ?: target?.album ?: "this music"
     var ask by remember { mutableStateOf("") }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
             TopAppBar(
-                title = { Text("About " + (artist ?: "this music")) },
+                title = { Text("About $heading", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.Filled.KeyboardArrowDown, "Close") }
                 },

@@ -55,6 +55,11 @@ class Prefs(context: Context) {
         get() = sp.getString("aiMixes", "[]") ?: "[]"
         set(v) = sp.edit().putString("aiMixes", v).apply()
 
+    /** Favourite radio stations, serialised as a JSON array. */
+    var favStationsJson: String
+        get() = sp.getString("favStations", "[]") ?: "[]"
+        set(v) = sp.edit().putString("favStations", v).apply()
+
     /** Recent search queries, most-recent first (newline-delimited). */
     var recentSearches: List<String>
         get() = sp.getString("recentSearches", "")?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()

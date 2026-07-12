@@ -1,8 +1,11 @@
 package com.sikamikaniko.sonora.ui
 
+import android.Manifest
 import android.app.Application
 import android.content.ComponentName
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -30,6 +33,7 @@ import com.sikamikaniko.sonora.data.OnlineLyrics
 import com.sikamikaniko.sonora.data.Playlist
 import com.sikamikaniko.sonora.data.PlaylistWithSongs
 import com.sikamikaniko.sonora.data.Prefs
+import com.sikamikaniko.sonora.data.RadioBrowser
 import com.sikamikaniko.sonora.data.SearchResult3
 import com.sikamikaniko.sonora.data.Song
 import com.sikamikaniko.sonora.data.Subsonic
@@ -127,6 +131,79 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- World radio ----
+    private val _stations = MutableStateFlow<List<RadioBrowser.Station>>(emptyList())
+    val stations: StateFlow<List<RadioBrowser.Station>> = _stations.asStateFlow()
+    private val _radioLoading = MutableStateFlow(false)
+    val radioLoading: StateFlow<Boolean> = _radioLoading.asStateFlow()
+    private val _radioGenre = MutableStateFlow<String?>(null)
+    val radioGenre: StateFlow<String?> = _radioGenre.asStateFlow()
+    private val _isLive = MutableStateFlow(false)
+    val isLive: StateFlow<Boolean> = _isLive.asStateFlow()
+    private val _favStations = MutableStateFlow(loadFavStations())
+    val favStations: StateFlow<List<RadioBrowser.Station>> = _favStations.asStateFlow()
+
+    private fun loadFavStations(): List<RadioBrowser.Station> = try {
+        aiGson.fromJson(prefs.favStationsJson, Array<RadioBrowser.Station>::class.java)?.toList() ?: emptyList()
+    } catch (_: Exception) { emptyList() }
+    private fun persistFavStations() { prefs.favStationsJson = aiGson.toJson(_favStations.value) }
+
+    fun loadTopStations() = viewModelScope.launch {
+        _radioLoading.value = true; _radioGenre.value = null
+        _stations.value = RadioBrowser.top(60)
+        _radioLoading.value = false
+    }
+    fun loadGenre(tag: String) = viewModelScope.launch {
+        _radioLoading.value = true; _radioGenre.value = tag
+        _stations.value = RadioBrowser.byTag(tag)
+        _radioLoading.value = false
+    }
+    fun searchStations(q: String) = viewModelScope.launch {
+        if (q.isBlank()) return@launch
+        _radioLoading.value = true; _radioGenre.value = null
+        _stations.value = RadioBrowser.search(q)
+        _radioLoading.value = false
+    }
+    fun surpriseStation() = viewModelScope.launch {
+        _radioLoading.value = true
+        val s = RadioBrowser.random(_radioGenre.value)
+        _radioLoading.value = false
+        if (s != null) playStation(s)
+    }
+    fun playStation(s: RadioBrowser.Station) {
+        val c = controller ?: return
+        val url = s.url_resolved ?: return
+        val meta = MediaMetadata.Builder()
+            .setTitle(s.name ?: "Live radio")
+            .setArtist(s.country ?: "Live radio")
+            .apply { s.favicon?.takeIf { it.isNotBlank() }?.let { setArtworkUri(Uri.parse(it)) } }
+            .build()
+        val item = MediaItem.Builder()
+            .setMediaId("radio:${s.stationuuid}")
+            .setUri(url)
+            .setMediaMetadata(meta)
+            .build()
+        c.setMediaItems(listOf(item)); c.prepare(); c.play()
+    }
+    fun isFavStation(uuid: String) = _favStations.value.any { it.stationuuid == uuid }
+    fun toggleFavStation(s: RadioBrowser.Station) {
+        _favStations.value = if (isFavStation(s.stationuuid)) _favStations.value.filter { it.stationuuid != s.stationuuid }
+        else _favStations.value + s
+        persistFavStations()
+    }
+
+    // ---- Insights target (educator works anywhere, not just now-playing) ----
+    data class InsightTarget(val title: String?, val artist: String?, val album: String?)
+    private val _insightTarget = MutableStateFlow<InsightTarget?>(null)
+    val insightTarget: StateFlow<InsightTarget?> = _insightTarget.asStateFlow()
+    fun openInsights(title: String?, artist: String?, album: String?) {
+        _insightTarget.value = InsightTarget(title, artist, album)
+        _aiText.value = ""
+        aiInsights(if (!title.isNullOrBlank()) "song" else if (!album.isNullOrBlank()) "album" else "artist")
+    }
+    fun openInsightsCurrent() = openInsights(_title.value, _artist.value, _albumTitle.value)
+    fun closeInsights() { _insightTarget.value = null; _aiText.value = ""; _aiStreaming.value = false }
+
     // ---- Local device library ----
     private val _localSongs = MutableStateFlow<List<Song>>(emptyList())
     val localSongs: StateFlow<List<Song>> = _localSongs.asStateFlow()
@@ -156,6 +233,21 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- AI ----
     private val aiGson = Gson()
+
+    // Guard rails for small/hallucination-prone models, and anti-repetition.
+    private val antiHallucination = "Only say things you are genuinely confident about. If you don't know the " +
+        "writer, year, label or a specific detail, say so briefly — NEVER invent names, dates, chart positions or events. " +
+        "Do NOT open with filler like \"Okay\", \"Sure\", \"Let's dive in\" or \"Let's explore\" — start directly with the substance, " +
+        "and vary your phrasing each time."
+    private val styleHints = listOf(
+        "Lead with the single most surprising or specific detail.",
+        "Open with a concrete image or fact, mid-thought.",
+        "Be matter-of-fact and precise; no throat-clearing.",
+        "Start from an unexpected connection to something else.",
+        "Write like a friend texting you a cool fact — no preamble.",
+        "Anchor it in a time and place from the first words."
+    )
+    private fun styleHint() = styleHints.random()
     private val _aiEnabled = MutableStateFlow(prefs.aiEnabled)
     val aiEnabled: StateFlow<Boolean> = _aiEnabled.asStateFlow()
     private val _aiBaseUrl = MutableStateFlow(prefs.aiBaseUrl)
@@ -353,7 +445,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val al = _albumTitle.value ?: ""
         val sys = "You are a sharp, friendly music writer. 3-4 sentences, plain text, no markdown. " +
             "Favour interesting connections (samples, influences, who-inspired-whom, cultural context) over dry facts. " +
-            "If unsure of a fact, stay general and say so briefly."
+            antiHallucination + " " + styleHint()
         val user = when (topic) {
             "album" -> "Tell me about the album \"$al\" by $ar."
             "artist" -> "Tell me about the artist $ar — their sound, importance, and who they connect to."
@@ -367,6 +459,59 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _aiStreaming.value = false
     }
 
+    // ---- AI similar-songs discovery (AI-based, not hardcoded) ----
+    data class SimilarItem(val title: String, val artist: String, val librarySong: Song?)
+    private val _similar = MutableStateFlow<List<SimilarItem>>(emptyList())
+    val similar: StateFlow<List<SimilarItem>> = _similar.asStateFlow()
+    private val _similarLoading = MutableStateFlow(false)
+    val similarLoading: StateFlow<Boolean> = _similarLoading.asStateFlow()
+    private val _similarSeed = MutableStateFlow<String?>(null)
+    val similarSeed: StateFlow<String?> = _similarSeed.asStateFlow()
+
+    private data class SimSong(val title: String? = null, val artist: String? = null)
+    private data class SimResult(val songs: List<SimSong>? = null)
+
+    /** Ask the AI for songs similar to the given (or current) song; resolve each against the library. */
+    fun loadSimilar(title: String? = null, artist: String? = null) = viewModelScope.launch {
+        val t = title ?: _title.value ?: ""
+        val ar = artist ?: _artist.value ?: ""
+        _similarSeed.value = if (t.isNotBlank()) "$t · $ar" else null
+        if (!aiReady || t.isBlank()) { _similar.value = emptyList(); return@launch }
+        _similarLoading.value = true
+        _similar.value = emptyList()
+        try {
+            val sys = "You are a music discovery expert. Suggest 12 songs similar in style, mood and era to the given song — " +
+                "great for discovering new music. Use DIFFERENT artists, mixing well-known picks and deeper cuts. " +
+                "Reply ONLY as JSON: {\"songs\":[{\"title\":\"..\",\"artist\":\"..\"}]}."
+            val user = "Song: \"$t\" by $ar."
+            val json = AiClient.chat(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user)), json = true)
+            val pairs = parseSimilar(json)
+            _similar.value = pairs.map { (ti, arti) -> SimilarItem(ti, arti, findInLibrary(ti, arti)) }
+        } catch (_: Exception) {
+        } finally {
+            _similarLoading.value = false
+        }
+    }
+
+    private fun parseSimilar(json: String?): List<Pair<String, String>> = try {
+        if (json.isNullOrBlank()) emptyList()
+        else aiGson.fromJson(json, SimResult::class.java)?.songs
+            ?.mapNotNull { s -> if (!s.title.isNullOrBlank() && !s.artist.isNullOrBlank()) s.title to s.artist else null }
+            ?: emptyList()
+    } catch (_: Exception) { emptyList() }
+
+    private suspend fun findInLibrary(title: String, artist: String): Song? = try {
+        val res = Subsonic.api?.search3("$title $artist", songCount = 8)?.response?.searchResult3?.song ?: emptyList()
+        res.firstOrNull {
+            (it.title?.contains(title, true) == true || title.contains(it.title ?: " ", true)) &&
+                (it.artist?.contains(artist, true) == true || artist.contains(it.artist ?: " ", true))
+        }
+    } catch (_: Exception) { null }
+
+    fun playSimilar(item: SimilarItem) { item.librarySong?.let { playSongs(listOf(it), 0) } }
+    fun queueSimilar(item: SimilarItem) { item.librarySong?.let { addToQueue(listOf(it)) } }
+    fun youtubeQuery(item: SimilarItem) = "${item.title} ${item.artist}"
+
     /** Free-form question about the currently playing music (streaming). */
     fun aiAsk(question: String) = viewModelScope.launch {
         if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
@@ -375,7 +520,8 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _aiStreaming.value = true
         val ctx = "The user is listening to \"${_title.value ?: ""}\" by ${_artist.value ?: ""}" +
             (_albumTitle.value?.let { " (album \"$it\")" } ?: "") + "."
-        val sys = "You are a knowledgeable, friendly music companion. Answer briefly (2-4 sentences), plain text. Be honest if unsure."
+        val sys = "You are a knowledgeable, friendly music companion. Answer briefly (2-4 sentences), plain text. " +
+            antiHallucination + " " + styleHint()
         AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", "$ctx Question: $question"))) { tok ->
             _aiText.value += tok
         }
@@ -532,7 +678,15 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         Subsonic.loadFrom(prefs)
         connectController()
         if (_loggedIn.value) refreshAll()
+        maybeScanDevice()
         checkForUpdate()
+    }
+
+    private fun maybeScanDevice() {
+        val ctx = getApplication<Application>()
+        val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+            Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
+        if (ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED) scanDevice()
     }
 
     fun checkForUpdate() {
@@ -590,7 +744,9 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             lastArtUrl = art
             extractArtColors(art)
         }
-        _currentMediaId.value = c.currentMediaItem?.mediaId
+        val mid = c.currentMediaItem?.mediaId
+        _currentMediaId.value = mid
+        _isLive.value = mid?.startsWith("radio:") == true
         _hasCurrent.value = c.currentMediaItem != null
         _isPlaying.value = c.isPlaying
         _repeatMode.value = c.repeatMode
@@ -692,8 +848,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun shuffleLibrary() = viewModelScope.launch {
-        val songs = Subsonic.api?.getRandomSongs(150)?.response?.randomSongs?.song ?: emptyList()
-        shufflePlay(songs)
+        val server = Subsonic.api?.getRandomSongs(150)?.response?.randomSongs?.song ?: emptyList()
+        // Include device songs in the shuffle pool so they're part of the whole fleet.
+        val pool = (server + _localSongs.value).shuffled()
+        shufflePlay(pool)
     }
 
     // ---- Appearance / cache ----
@@ -789,8 +947,21 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun search(query: String) {
         if (query.isBlank()) { _searchResult.value = null; return }
         viewModelScope.launch {
-            try { _searchResult.value = Subsonic.api?.search3(query)?.response?.searchResult3 }
-            catch (e: Exception) { _error.value = e.message ?: "Search failed" }
+            try {
+                val server = Subsonic.api?.search3(query)?.response?.searchResult3
+                // Device songs are part of the whole library — merge matching ones in.
+                val q = query.trim()
+                val local = _localSongs.value.filter {
+                    (it.title?.contains(q, true) == true) ||
+                        (it.artist?.contains(q, true) == true) ||
+                        (it.album?.contains(q, true) == true)
+                }.take(40)
+                _searchResult.value = when {
+                    server == null && local.isEmpty() -> null
+                    server == null -> SearchResult3(null, null, local)
+                    else -> server.copy(song = (server.song ?: emptyList()) + local)
+                }
+            } catch (e: Exception) { _error.value = e.message ?: "Search failed" }
         }
     }
 

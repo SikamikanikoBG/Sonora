@@ -17,7 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Timer
@@ -81,6 +83,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -103,7 +106,8 @@ fun MiniPlayer(vm: SonoraViewModel, onExpand: () -> Unit) {
     val isPlaying by vm.isPlaying.collectAsState()
     val position by vm.position.collectAsState()
     val duration by vm.duration.collectAsState()
-    val brand = LocalBrandBrush.current
+    val artBrush by vm.artBrush.collectAsState()
+    val brand = artBrush ?: LocalBrandBrush.current
 
     val progress = if (duration > 0L) (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
     val animatedProgress by animateFloatAsState(progress, tween(280), label = "miniProgress")
@@ -187,6 +191,7 @@ fun NowPlayingScreen(
     onOpenQueue: () -> Unit,
     onOpenLyrics: () -> Unit,
     onOpenInsights: () -> Unit,
+    onFindSimilar: () -> Unit,
     onGoToAlbum: (String) -> Unit,
     onGoToArtist: (String) -> Unit
 ) {
@@ -205,11 +210,13 @@ fun NowPlayingScreen(
     val speed by vm.speed.collectAsState()
     val albumId by vm.currentAlbumId.collectAsState()
     val artistId by vm.currentArtistId.collectAsState()
+    val isLive by vm.isLive.collectAsState()
 
     val artBrush by vm.artBrush.collectAsState()
     val brand = artBrush ?: LocalBrandBrush.current
     val haptics = LocalHapticFeedback.current
     val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
 
     val isStarred = mediaId != null && starredIds.contains(mediaId)
     var dragging by remember { mutableStateOf(false) }
@@ -257,6 +264,8 @@ fun NowPlayingScreen(
                         uriHandler.openUri("https://www.google.com/search?q=$q")
                     },
                     onInsights = onOpenInsights,
+                    onSimilar = onFindSimilar,
+                    onShare = { ShareUtil.shareNowPlaying(context, title, artist) },
                     onGoAlbum = { albumId?.let(onGoToAlbum) },
                     onGoArtist = { artistId?.let(onGoToArtist) }
                 )
@@ -265,14 +274,18 @@ fun NowPlayingScreen(
             Spacer(Modifier.height(28.dp))
             Box(
                 Modifier.fillMaxWidth().aspectRatio(1f).padding(horizontal = 6.dp)
-                    .pointerInput(Unit) {
-                        var total = 0f
-                        detectHorizontalDragGestures(
+                    .pointerInput(albumId) {
+                        var dx = 0f; var dy = 0f
+                        detectDragGestures(
                             onDragEnd = {
-                                if (total < -80f) vm.next() else if (total > 80f) vm.previous()
-                                total = 0f
+                                if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
+                                    if (dx < -80f) vm.next() else if (dx > 80f) vm.previous()
+                                } else if (dy < -100f) {
+                                    albumId?.let(onGoToAlbum)
+                                }
+                                dx = 0f; dy = 0f
                             },
-                            onHorizontalDrag = { _, dx -> total += dx }
+                            onDrag = { change, amount -> change.consume(); dx += amount.x; dy += amount.y }
                         )
                     },
                 contentAlignment = Alignment.Center
@@ -328,33 +341,45 @@ fun NowPlayingScreen(
             }
 
             Spacer(Modifier.height(14.dp))
-            Slider(
-                value = sliderValue,
-                onValueChange = { dragging = true; dragPos = it },
-                onValueChangeFinished = { vm.seekTo(dragPos.toLong()); dragging = false },
-                valueRange = 0f..sliderMax,
-                thumb = {
-                    val thumbScale by animateFloatAsState(if (dragging) 1.3f else 1f, label = "thumb")
-                    Box(
-                        Modifier.size(18.dp).scale(thumbScale)
-                            .clip(CircleShape).background(brand)
-                            .border(2.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
-                    )
-                },
-                track = {
-                    val frac = (sliderValue / sliderMax).coerceIn(0f, 1f)
-                    Box(
-                        Modifier.fillMaxWidth().height(6.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Box(Modifier.fillMaxHeight().fillMaxWidth(frac).clip(CircleShape).background(brand))
-                    }
+            if (isLive) {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(9.dp).clip(CircleShape).background(Color.Red))
+                    Spacer(Modifier.size(8.dp))
+                    Text("LIVE RADIO", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatDuration(sliderValue.toLong()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(formatDuration(duration), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Slider(
+                    value = sliderValue,
+                    onValueChange = { dragging = true; dragPos = it },
+                    onValueChangeFinished = { vm.seekTo(dragPos.toLong()); dragging = false },
+                    valueRange = 0f..sliderMax,
+                    thumb = {
+                        val thumbScale by animateFloatAsState(if (dragging) 1.3f else 1f, label = "thumb")
+                        Box(
+                            Modifier.size(18.dp).scale(thumbScale)
+                                .clip(CircleShape).background(brand)
+                                .border(2.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                        )
+                    },
+                    track = {
+                        val frac = (sliderValue / sliderMax).coerceIn(0f, 1f)
+                        Box(
+                            Modifier.fillMaxWidth().height(6.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Box(Modifier.fillMaxHeight().fillMaxWidth(frac).clip(CircleShape).background(brand))
+                        }
+                    }
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(formatDuration(sliderValue.toLong()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(formatDuration(duration), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
 
             Spacer(Modifier.height(18.dp))
@@ -530,6 +555,8 @@ private fun NpOverflow(
     onLyrics: () -> Unit,
     onChords: () -> Unit,
     onInsights: () -> Unit,
+    onSimilar: () -> Unit,
+    onShare: () -> Unit,
     onGoAlbum: () -> Unit,
     onGoArtist: () -> Unit
 ) {
@@ -538,6 +565,8 @@ private fun NpOverflow(
         IconButton(onClick = { expanded = true }) { Icon(Icons.Filled.MoreVert, "More") }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("About this music") }, leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) }, onClick = { expanded = false; onInsights() })
+            DropdownMenuItem(text = { Text("Find similar songs") }, leadingIcon = { Icon(Icons.Filled.Explore, null) }, onClick = { expanded = false; onSimilar() })
+            DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Filled.Share, null) }, onClick = { expanded = false; onShare() })
             DropdownMenuItem(text = { Text("Lyrics") }, leadingIcon = { Icon(Icons.Filled.Lyrics, null) }, onClick = { expanded = false; onLyrics() })
             DropdownMenuItem(text = { Text("Guitar chords") }, leadingIcon = { Icon(Icons.Filled.MusicNote, null) }, onClick = { expanded = false; onChords() })
             if (hasAlbum) DropdownMenuItem(text = { Text("Go to album") }, leadingIcon = { Icon(Icons.Filled.Album, null) }, onClick = { expanded = false; onGoAlbum() })

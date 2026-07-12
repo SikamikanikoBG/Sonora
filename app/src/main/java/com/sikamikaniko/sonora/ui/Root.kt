@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -38,6 +39,7 @@ private sealed class Tab(val route: String, val label: String, val icon: ImageVe
     data object Library : Tab("library", "Library", Icons.Filled.LibraryMusic)
     data object Search : Tab("search", "Search", Icons.Filled.Search)
     data object Playlists : Tab("playlists", "Playlists", Icons.AutoMirrored.Filled.QueueMusic)
+    data object Radio : Tab("radio", "Radio", Icons.Filled.Radio)
 }
 
 @Composable
@@ -60,8 +62,8 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     var showPlayer by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
-    var showInsights by remember { mutableStateOf(false) }
-    val tabs = listOf(Tab.Home, Tab.Library, Tab.Search, Tab.Playlists)
+    val insightTarget by vm.insightTarget.collectAsState()
+    val tabs = listOf(Tab.Home, Tab.Library, Tab.Search, Tab.Playlists, Tab.Radio)
     val selCount = if (selMode == SelMode.SONGS) selectedSongs.size else selectedAlbums.size
 
     LaunchedEffect(toast) {
@@ -114,6 +116,11 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             }
             composable("settings") { SettingsScreen(vm, nav) }
             composable("ai") { AskScreen(vm, nav) }
+            composable(Tab.Radio.route) { RadioScreen(vm, nav) }
+            composable("similar") { SimilarSongsScreen(vm, nav) }
+            composable("yt/{q}") { entry ->
+                YouTubeScreen(entry.arguments?.getString("q") ?: "", nav)
+            }
         }
     }
 
@@ -123,7 +130,8 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             onBack = { showPlayer = false },
             onOpenQueue = { showQueue = true },
             onOpenLyrics = { showLyrics = true },
-            onOpenInsights = { showInsights = true },
+            onOpenInsights = { vm.openInsightsCurrent() },
+            onFindSimilar = { showPlayer = false; nav.navigate("similar") },
             onGoToAlbum = { id -> showPlayer = false; nav.navigate("album/$id") },
             onGoToArtist = { id -> showPlayer = false; nav.navigate("artist/$id") }
         )
@@ -134,13 +142,12 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     if (showLyrics) {
         LyricsScreen(vm, onBack = { showLyrics = false })
     }
-    if (showInsights) {
-        LaunchedEffect(Unit) { vm.aiInsights() }
-        InsightsScreen(vm, onBack = { showInsights = false; vm.clearAiText() })
+    if (insightTarget != null) {
+        InsightsScreen(vm, onBack = { vm.closeInsights() })
     }
-    BackHandler(enabled = showPlayer || showQueue || showLyrics || showInsights || selMode != SelMode.NONE) {
+    BackHandler(enabled = showPlayer || showQueue || showLyrics || insightTarget != null || selMode != SelMode.NONE) {
         when {
-            showInsights -> { showInsights = false; vm.clearAiText() }
+            insightTarget != null -> vm.closeInsights()
             showLyrics -> showLyrics = false
             showQueue -> showQueue = false
             showPlayer -> showPlayer = false

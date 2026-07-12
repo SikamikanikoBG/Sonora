@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -331,6 +332,7 @@ data class SongRowActions(
     val onGoToArtist: (() -> Unit)?,
     val onGoToAlbum: (() -> Unit)?,
     val onToggleStar: () -> Unit,
+    val onAbout: (() -> Unit)? = null,
     val onRemove: (() -> Unit)? = null,
     val removeLabel: String = "Remove"
 )
@@ -449,6 +451,13 @@ private fun SongMenu(starred: Boolean, actions: SongRowActions) {
                 leadingIcon = { Icon(if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, null) },
                 onClick = { open = false; actions.onToggleStar() }
             )
+            actions.onAbout?.let { about ->
+                DropdownMenuItem(
+                    text = { Text("About this song") },
+                    leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) },
+                    onClick = { open = false; about() }
+                )
+            }
             actions.onGoToArtist?.let { go ->
                 DropdownMenuItem(
                     text = { Text("Go to artist") },
@@ -503,6 +512,7 @@ fun SongItem(
             onGoToArtist = song.artistId?.let { aid -> { nav.navigate("artist/$aid") } },
             onGoToAlbum = song.albumId?.let { alid -> { nav.navigate("album/$alid") } },
             onToggleStar = { vm.toggleStar(song.id) },
+            onAbout = { vm.openInsights(song.title, song.artist, song.album) },
             onRemove = onRemove,
             removeLabel = removeLabel
         ),
