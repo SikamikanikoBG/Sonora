@@ -28,16 +28,24 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import coil.compose.SubcomposeAsyncImage
+import com.sikamikaniko.sonora.data.Subsonic
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,6 +79,25 @@ fun AlbumScreen(vm: SonoraViewModel, albumId: String, nav: NavController, onBack
 
             LazyColumn(Modifier.fillMaxSize()) {
                 item {
+                    Box(Modifier.fillMaxWidth()) {
+                        current.coverArt?.let { cover ->
+                            SubcomposeAsyncImage(
+                                model = Subsonic.coverArtUrl(cover, 512),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.matchParentSize().blur(38.dp).alpha(0.45f)
+                            )
+                            Box(
+                                Modifier.matchParentSize().background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.25f),
+                                            MaterialTheme.colorScheme.background
+                                        )
+                                    )
+                                )
+                            )
+                        }
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.fillMaxWidth().padding(16.dp)
@@ -97,6 +124,7 @@ fun AlbumScreen(vm: SonoraViewModel, albumId: String, nav: NavController, onBack
                                 }
                             }
                         }
+                    }
                     }
                 }
                 itemsIndexed(songs) { index, song ->
