@@ -28,6 +28,16 @@ object AiClient {
 
     private fun base(baseUrl: String) = baseUrl.trim().trimEnd('/')
 
+    /** Strips <think>/<thinking> reasoning blocks (including an unclosed trailing one). */
+    private fun stripThink(s: String): String {
+        var r = s.replace(Regex("(?s)<think>.*?</think>"), "")
+            .replace(Regex("(?s)<thinking>.*?</thinking>"), "")
+        var open = r.indexOf("<think>")
+        if (open < 0) open = r.indexOf("<thinking>")
+        if (open >= 0) r = r.substring(0, open)
+        return r.trimStart()
+    }
+
     /** GET /api/tags — the models installed on the server. */
     suspend fun listModels(baseUrl: String): List<String> = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank()) return@withContext emptyList()
@@ -54,6 +64,7 @@ object AiClient {
                     "model" to model,
                     "messages" to messages.map { mapOf("role" to it.role, "content" to it.content) },
                     "stream" to false,
+                    "think" to false, // disable reasoning tokens on thinking-capable models (ignored otherwise)
                     "options" to mapOf("num_ctx" to 8192, "temperature" to 0.4)
                 )
                 if (json) payload["format"] = "json"
@@ -62,7 +73,7 @@ object AiClient {
                 client.newCall(req).execute().use { r ->
                     if (!r.isSuccessful) return@withContext null
                     val obj = JsonParser.parseString(r.body?.string()).asJsonObject
-                    obj.getAsJsonObject("message")?.get("content")?.asString
+                    obj.getAsJsonObject("message")?.get("content")?.asString?.let { stripThink(it) }
                 }
             } catch (e: Exception) {
                 null
@@ -82,6 +93,7 @@ object AiClient {
                 "model" to model,
                 "messages" to messages.map { mapOf("role" to it.role, "content" to it.content) },
                 "stream" to true,
+                "think" to false,
                 "options" to mapOf("num_ctx" to 8192, "temperature" to 0.6)
             )
             val body = gson.toJson(payload).toRequestBody(JSON)
@@ -89,11 +101,21 @@ object AiClient {
             client.newCall(req).execute().use { r ->
                 if (!r.isSuccessful) return@withContext false
                 val source = r.body?.source() ?: return@withContext false
+                val raw = StringBuilder()
+                var emitted = 0
                 while (!source.exhausted()) {
                     val line = source.readUtf8Line() ?: break
                     if (line.isBlank()) continue
                     val obj = JsonParser.parseString(line).asJsonObject
-                    obj.getAsJsonObject("message")?.get("content")?.asString?.let { onToken(it) }
+                    obj.getAsJsonObject("message")?.get("content")?.asString?.let { chunk ->
+                        // Suppress any <think> reasoning; only stream the real answer.
+                        raw.append(chunk)
+                        val cleaned = stripThink(raw.toString())
+                        if (cleaned.length > emitted) {
+                            onToken(cleaned.substring(emitted))
+                            emitted = cleaned.length
+                        }
+                    }
                     if (obj.get("done")?.asBoolean == true) break
                 }
                 true

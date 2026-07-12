@@ -10,9 +10,9 @@ import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 /**
- * Fetches lyrics from lrclib.net (free, no auth) as a fallback when the music
- * server has none. Tries several strategies, most-precise first, so odd tags,
- * missing albums or slightly-off durations still resolve.
+ * Fetches lyrics from lrclib.net (free, no auth) — both plain and time-synced.
+ * Tries several strategies (most precise first) so odd tags / missing album /
+ * slightly-off durations still resolve.
  */
 object OnlineLyrics {
 
@@ -21,7 +21,7 @@ object OnlineLyrics {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
     private val gson = Gson()
-    private const val UA = "Sonora/1.5 (https://github.com/SikamikanikoBG/Sonora)"
+    private const val UA = "Sonora/1.6 (https://github.com/SikamikanikoBG/Sonora)"
 
     data class Lrc(
         val plainLyrics: String? = null,
@@ -29,24 +29,48 @@ object OnlineLyrics {
         val instrumental: Boolean? = null
     )
 
-    suspend fun fetch(artist: String?, title: String?, album: String?, durationSec: Int): String? =
+    /** Best matching record (plain and/or synced). */
+    suspend fun best(artist: String?, title: String?, album: String?, durationSec: Int): Lrc? =
         withContext(Dispatchers.IO) {
             if (artist.isNullOrBlank() || title.isNullOrBlank()) return@withContext null
             val a = artist.replace(Regex("(?i)\\s+feat\\.?.*$"), "").trim()
-            // 1) exact get on title+artist (most reliable single hit)
-            getExact(title, a, null, 0)?.let { return@withContext it }
-            // 2) exact get including album + duration (if we have them)
+            getLrc(title, a, null, 0)?.let { if (usable(it)) return@withContext it }
             if (!album.isNullOrBlank() || durationSec > 0) {
-                getExact(title, a, album, durationSec)?.let { return@withContext it }
+                getLrc(title, a, album, durationSec)?.let { if (usable(it)) return@withContext it }
             }
-            // 3) structured search
-            search("track_name=${enc(title)}&artist_name=${enc(a)}")?.let { return@withContext it }
-            // 4) free-text search — last resort, most forgiving
-            search("q=${enc("$title $a")}")?.let { return@withContext it }
+            searchLrc("track_name=${enc(title)}&artist_name=${enc(a)}")?.let { return@withContext it }
+            searchLrc("q=${enc("$title $a")}")?.let { return@withContext it }
             null
         }
 
-    private fun getExact(title: String, artist: String, album: String?, durationSec: Int): String? {
+    /** Plain lyrics only (convenience). */
+    suspend fun fetch(artist: String?, title: String?, album: String?, durationSec: Int): String? =
+        best(artist, title, album, durationSec)?.let { plainFrom(it) }
+
+    /** Parses "[mm:ss.xx] text" synced lyrics into (millis -> line) pairs, sorted. */
+    fun parseSynced(synced: String?): List<Pair<Long, String>> {
+        if (synced.isNullOrBlank()) return emptyList()
+        val rx = Regex("\\[(\\d{1,2}):(\\d{2})(?:[.:](\\d{1,3}))?]")
+        val out = ArrayList<Pair<Long, String>>()
+        for (line in synced.lineSequence()) {
+            val matches = rx.findAll(line).toList()
+            if (matches.isEmpty()) continue
+            val text = line.replace(rx, "").trim()
+            for (m in matches) {
+                val mm = m.groupValues[1].toLong()
+                val ss = m.groupValues[2].toLong()
+                val frac = m.groupValues[3]
+                val ms = mm * 60000 + ss * 1000 + (if (frac.isNotEmpty()) frac.padEnd(3, '0').take(3).toLong() else 0)
+                out.add(ms to text)
+            }
+        }
+        return out.sortedBy { it.first }
+    }
+
+    private fun usable(lrc: Lrc): Boolean =
+        lrc.instrumental != true && (!lrc.plainLyrics.isNullOrBlank() || !lrc.syncedLyrics.isNullOrBlank())
+
+    private fun getLrc(title: String, artist: String, album: String?, durationSec: Int): Lrc? {
         val url = buildString {
             append("https://lrclib.net/api/get?track_name=").append(enc(title))
             append("&artist_name=").append(enc(artist))
@@ -54,21 +78,19 @@ object OnlineLyrics {
             if (durationSec > 0) append("&duration=").append(durationSec)
         }
         val body = request(url) ?: return null
-        return try { plainFrom(gson.fromJson(body, Lrc::class.java)) } catch (_: Exception) { null }
+        return try { gson.fromJson(body, Lrc::class.java) } catch (_: Exception) { null }
     }
 
-    private fun search(queryParams: String): String? {
+    private fun searchLrc(queryParams: String): Lrc? {
         val body = request("https://lrclib.net/api/search?$queryParams") ?: return null
         return try {
-            val arr = JsonParser.parseString(body).asJsonArray
-            for (el in arr) {
-                plainFrom(gson.fromJson(el, Lrc::class.java))?.let { return it }
-            }
-            null
+            JsonParser.parseString(body).asJsonArray
+                .map { gson.fromJson(it, Lrc::class.java) }
+                .firstOrNull { usable(it) }
         } catch (_: Exception) { null }
     }
 
-    private fun plainFrom(lrc: Lrc?): String? {
+    fun plainFrom(lrc: Lrc?): String? {
         if (lrc == null || lrc.instrumental == true) return null
         lrc.plainLyrics?.takeIf { it.isNotBlank() }?.let { return it }
         lrc.syncedLyrics?.takeIf { it.isNotBlank() }?.let { return stripTimestamps(it) }
@@ -83,9 +105,7 @@ object OnlineLyrics {
 
     private fun request(url: String): String? = try {
         val req = Request.Builder().url(url).header("User-Agent", UA).build()
-        client.newCall(req).execute().use { resp ->
-            if (resp.isSuccessful) resp.body?.string() else null
-        }
+        client.newCall(req).execute().use { resp -> if (resp.isSuccessful) resp.body?.string() else null }
     } catch (_: Exception) { null }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")

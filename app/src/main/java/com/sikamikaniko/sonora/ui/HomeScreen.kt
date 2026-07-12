@@ -74,6 +74,10 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
     val frequent by vm.frequent.collectAsState()
     val random by vm.randomAlbums.collectAsState()
     val mixes by vm.mixes.collectAsState()
+    val aiEnabled by vm.aiEnabled.collectAsState()
+    val aiBaseUrl by vm.aiBaseUrl.collectAsState()
+    val aiModel by vm.aiModel.collectAsState()
+    val aiReady = aiEnabled && aiBaseUrl.isNotBlank() && aiModel.isNotBlank()
     val brand = LocalBrandBrush.current
     val context = LocalContext.current
     var renaming by remember { mutableStateOf<AiMix?>(null) }
@@ -99,13 +103,14 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
                 onSettings = { nav.navigate("settings") }
             )
         }
-        if (mixes.isNotEmpty()) {
+        if (mixes.isNotEmpty() || aiReady) {
             item {
                 SectionHeader("Your AI mixes")
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    if (aiReady) item { MadeForYouCard(brand) { vm.madeForYou() } }
                     items(mixes, key = { it.id }) { mix ->
                         MixCard(
                             mix, brand,
@@ -233,6 +238,31 @@ private fun MixCard(
             DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Filled.Share, null) }, onClick = { menu = false; onShare() })
             DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; onRename() })
             DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
+        }
+    }
+}
+
+@Composable
+private fun MadeForYouCard(brand: androidx.compose.ui.graphics.Brush, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .width(196.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(brand)
+            .clickable(onClick = onClick)
+            .padding(10.dp)
+    ) {
+        Box(
+            Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Color.White.copy(alpha = 0.22f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Made for you", color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("AI picks from your taste", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

@@ -630,6 +630,8 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Lyrics ----
     private val _lyrics = MutableStateFlow<String?>(null)
     val lyrics: StateFlow<String?> = _lyrics.asStateFlow()
+    private val _syncedLyrics = MutableStateFlow<List<Pair<Long, String>>?>(null)
+    val syncedLyrics: StateFlow<List<Pair<Long, String>>?> = _syncedLyrics.asStateFlow()
     private val _lyricsLoading = MutableStateFlow(false)
     val lyricsLoading: StateFlow<Boolean> = _lyricsLoading.asStateFlow()
 
@@ -1164,18 +1166,30 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Lyrics ----
     fun loadLyrics() = viewModelScope.launch {
         _lyricsLoading.value = true
+        _syncedLyrics.value = null
         // 1) try the music server
         var text = try {
             Subsonic.api?.getLyrics(_artist.value, _title.value)?.response?.lyrics?.value
         } catch (_: Exception) { null }
-        // 2) fall back to lrclib.net (most self-hosted libraries have no lyrics)
+        // 2) fall back to lrclib.net (plain + time-synced)
         if (text.isNullOrBlank()) {
-            text = OnlineLyrics.fetch(
-                _artist.value, _title.value, _albumTitle.value, (_duration.value / 1000).toInt()
-            )
+            val lrc = OnlineLyrics.best(_artist.value, _title.value, _albumTitle.value, (_duration.value / 1000).toInt())
+            text = OnlineLyrics.plainFrom(lrc)
+            _syncedLyrics.value = OnlineLyrics.parseSynced(lrc?.syncedLyrics).takeIf { it.isNotEmpty() }
         }
         _lyrics.value = text
         _lyricsLoading.value = false
+    }
+
+    /** Personalised AI recommendation seeded from the user's favourites & most-played. */
+    fun madeForYou() {
+        val taste = (_starredSongs.value.mapNotNull { it.artist } +
+            _starredAlbums.value.mapNotNull { it.artist } +
+            _frequent.value.mapNotNull { it.artist })
+            .distinct().take(12)
+        val prompt = if (taste.isEmpty()) "Build a great, varied mix for discovery."
+        else "I like artists like: ${taste.joinToString(", ")}. Build a great mix for me — mostly in that taste, with a couple of fresh discoveries."
+        aiDj(prompt)
     }
 
     // ---- Playlist management ----

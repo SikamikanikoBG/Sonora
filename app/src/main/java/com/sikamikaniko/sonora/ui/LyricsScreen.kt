@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -27,9 +30,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -38,6 +43,7 @@ import androidx.compose.ui.unit.dp
 fun LyricsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
     LaunchedEffect(Unit) { vm.clearAiText(); vm.loadLyrics() }
     val lyrics by vm.lyrics.collectAsState()
+    val synced by vm.syncedLyrics.collectAsState()
     val loading by vm.lyricsLoading.collectAsState()
     val title by vm.title.collectAsState()
     val aiText by vm.aiText.collectAsState()
@@ -77,14 +83,11 @@ fun LyricsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
                     if (aiText.isBlank()) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Thinking…", color = MaterialTheme.colorScheme.primary) }
                     } else {
-                        Text(
-                            aiText,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)
-                        )
+                        Text(aiText, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp))
                     }
                 }
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                synced != null -> SyncedLyrics(vm, synced!!)
                 lyrics.isNullOrBlank() -> CenterMessage("No lyrics found for this track.")
                 else -> Text(
                     lyrics ?: "",
@@ -92,6 +95,30 @@ fun LyricsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
                     modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SyncedLyrics(vm: SonoraViewModel, lines: List<Pair<Long, String>>) {
+    val position by vm.position.collectAsState()
+    val current = remember(position, lines) {
+        lines.indexOfLast { it.first <= position }.coerceIn(0, lines.lastIndex)
+    }
+    val state = rememberLazyListState()
+    LaunchedEffect(current) {
+        if (lines.isNotEmpty()) state.animateScrollToItem(current.coerceIn(0, lines.lastIndex), scrollOffset = -320)
+    }
+    LazyColumn(state = state, modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
+        itemsIndexed(lines) { i, line ->
+            val active = i == current
+            Text(
+                line.second.ifBlank { "♪" },
+                style = if (active) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.fillMaxWidth().clickable { vm.seekTo(line.first) }.padding(vertical = 7.dp)
+            )
         }
     }
 }
