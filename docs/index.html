@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sonora — your music, your server, your AI</title>
+<meta name="description" content="Sonora is a private, self-hosted, AI-native music player for Android. Stream your own library and local files, powered by your own local AI. Free and open source.">
+<meta property="og:title" content="Sonora — your music, your server, your AI">
+<meta property="og:description" content="A private, AI-native music player for your self-hosted library. Free & open source.">
+<style>
+  :root{
+    --bg:#0A0A12; --bg2:#0E0E1A; --surface:#15151F; --surface2:#1B1B28;
+    --ink:#F2F1F8; --muted:#A6A9BD; --faint:#71748A;
+    --line:rgba(255,255,255,.09);
+    --violet:#7C5CFF; --indigo:#5B3BE0; --teal:#3BE0C7; --pink:#FF6CC4; --amber:#FFC46B;
+    --grad:linear-gradient(120deg,var(--indigo),var(--violet) 42%,var(--pink));
+    --grad-tri:linear-gradient(120deg,var(--teal),var(--violet) 48%,var(--pink));
+    --maxw:1160px;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+  }
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+  h1,h2,h3{margin:0;line-height:1.05;letter-spacing:-.022em;text-wrap:balance;font-weight:800}
+  p{margin:0}
+  .eyebrow{font-family:var(--mono);font-size:.74rem;letter-spacing:.22em;text-transform:uppercase;color:var(--teal)}
+  .grad-text{background:var(--grad-tri);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .muted{color:var(--muted)}
+
+  /* aurora backdrop */
+  #aurora{position:fixed;inset:0;z-index:-2;opacity:.9}
+  .grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.035;
+    background-image:radial-gradient(circle at 1px 1px,#fff 1px,transparent 0);background-size:3px 3px;mix-blend-mode:overlay}
+
+  /* nav */
+  header{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
+    background:linear-gradient(180deg,rgba(10,10,18,.86),rgba(10,10,18,.5));border-bottom:1px solid var(--line)}
+  .nav{display:flex;align-items:center;gap:16px;height:66px}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:800;letter-spacing:-.02em;font-size:1.15rem}
+  .brand .mark{width:30px;height:30px;border-radius:9px;background:var(--grad);display:grid;place-items:center;flex:0 0 auto;box-shadow:0 6px 20px rgba(124,92,255,.4)}
+  .brand svg{width:17px;height:17px}
+  .nav .spacer{flex:1}
+  .nav a.link{color:var(--muted);font-size:.94rem;padding:8px 6px}
+  .nav a.link:hover{color:var(--ink)}
+  .btn{display:inline-flex;align-items:center;gap:8px;font-weight:650;font-size:.94rem;
+    padding:10px 18px;border-radius:999px;border:1px solid var(--line);color:var(--ink);transition:.18s;white-space:nowrap}
+  .btn:hover{border-color:rgba(255,255,255,.28);transform:translateY(-1px)}
+  .btn.primary{background:var(--grad);border:none;box-shadow:0 10px 30px rgba(124,92,255,.35)}
+  .btn.primary:hover{box-shadow:0 14px 40px rgba(124,92,255,.5)}
+  .nav .btn.ghost{display:none}
+  @media(min-width:720px){.nav .btn.ghost{display:inline-flex}}
+
+  /* hero */
+  .hero{padding:80px 0 40px;position:relative}
+  .hero-grid{display:grid;gap:48px;align-items:center;grid-template-columns:1fr}
+  @media(min-width:940px){.hero-grid{grid-template-columns:1.05fr .95fr}}
+  .hero h1{font-size:clamp(2.7rem,6.4vw,4.6rem);font-weight:850}
+  .hero .sub{font-size:clamp(1.05rem,2.2vw,1.28rem);color:var(--muted);margin-top:22px;max-width:35ch}
+  .cta-row{display:flex;flex-wrap:wrap;gap:14px;margin-top:32px}
+  .pill-row{display:flex;flex-wrap:wrap;gap:10px 22px;margin-top:30px;color:var(--faint);font-size:.9rem}
+  .pill-row span{display:inline-flex;align-items:center;gap:8px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--teal);box-shadow:0 0 10px var(--teal)}
+  .dot.v{background:var(--violet);box-shadow:0 0 10px var(--violet)}
+  .dot.p{background:var(--pink);box-shadow:0 0 10px var(--pink)}
+
+  .reveal{opacity:0;transform:translateY(20px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+  .reveal.in{opacity:1;transform:none}
+
+  /* phone mockup */
+  .phone-stage{display:grid;place-items:center;position:relative}
+  .glow{position:absolute;width:min(430px,90%);aspect-ratio:1;border-radius:50%;
+    background:var(--grad-tri);filter:blur(90px);opacity:.5;z-index:0}
+  .phone{position:relative;z-index:1;width:278px;aspect-ratio:9/19.3;border-radius:38px;
+    padding:11px;background:linear-gradient(160deg,#26263a,#0c0c16);box-shadow:0 40px 90px rgba(0,0,0,.6),inset 0 0 0 1px rgba(255,255,255,.06);
+    transform:rotate(-3deg)}
+  .screen{width:100%;height:100%;border-radius:29px;overflow:hidden;position:relative;background:#0b0b14;
+    display:flex;flex-direction:column}
+  .np-art{position:absolute;inset:0;background:linear-gradient(150deg,var(--indigo),var(--pink));opacity:.9}
+  .np-art:after{content:"";position:absolute;inset:0;background:radial-gradient(120% 80% at 50% 0,transparent,rgba(0,0,0,.55))}
+  .np{position:relative;z-index:2;display:flex;flex-direction:column;height:100%;padding:20px 18px;color:#fff}
+  .np .top{display:flex;justify-content:space-between;font-size:.7rem;opacity:.85}
+  .np .cover{margin:14px auto 0;width:80%;aspect-ratio:1;border-radius:18px;
+    background:linear-gradient(145deg,#ffffff22,#ffffff05);box-shadow:0 20px 50px rgba(0,0,0,.45),inset 0 0 0 1px #ffffff22;display:grid;place-items:center}
+  .np .cover svg{width:46px;height:46px;opacity:.92}
+  .np .meta{margin-top:auto}
+  .np .title{font-weight:800;font-size:1.05rem;letter-spacing:-.01em}
+  .np .artist{font-size:.82rem;opacity:.8}
+  .np .bar{height:4px;border-radius:3px;background:#ffffff2e;margin-top:14px;overflow:hidden}
+  .np .bar i{display:block;height:100%;width:44%;background:#fff;border-radius:3px}
+  .np .ctrl{display:flex;justify-content:space-between;align-items:center;margin-top:16px}
+  .np .ctrl .play{width:52px;height:52px;border-radius:50%;background:#fff;display:grid;place-items:center;color:#111}
+  .np .ctrl svg{width:22px;height:22px}
+  .badge-float{position:absolute;z-index:3;background:rgba(20,20,32,.82);backdrop-filter:blur(8px);
+    border:1px solid var(--line);border-radius:14px;padding:10px 13px;font-size:.78rem;display:flex;gap:9px;align-items:center;box-shadow:0 16px 40px rgba(0,0,0,.5)}
+  .badge-float .ic{width:24px;height:24px;border-radius:7px;background:var(--grad-tri);display:grid;place-items:center;flex:0 0 auto}
+  .badge-float .ic svg{width:13px;height:13px}
+  .bf1{top:8%;left:-6%} .bf2{bottom:14%;right:-9%}
+
+  /* generic section */
+  section{padding:76px 0;position:relative}
+  .sec-head{max-width:44ch}
+  .sec-head h2{font-size:clamp(1.9rem,4vw,2.9rem);margin-top:14px}
+  .sec-head p{color:var(--muted);margin-top:16px;font-size:1.06rem}
+
+  /* bento */
+  .bento{display:grid;gap:16px;margin-top:44px;grid-template-columns:repeat(6,1fr)}
+  .card{background:linear-gradient(180deg,var(--surface),var(--bg2));border:1px solid var(--line);
+    border-radius:20px;padding:24px;position:relative;overflow:hidden;transition:.2s}
+  .card:hover{border-color:rgba(255,255,255,.2);transform:translateY(-3px)}
+  .card .ic{width:42px;height:42px;border-radius:12px;background:rgba(124,92,255,.14);border:1px solid rgba(124,92,255,.3);
+    display:grid;place-items:center;margin-bottom:16px;color:var(--violet)}
+  .card .ic svg{width:21px;height:21px}
+  .card h3{font-size:1.16rem}
+  .card p{color:var(--muted);margin-top:8px;font-size:.96rem}
+  .card.span3{grid-column:span 6}
+  .card.span2{grid-column:span 6}
+  .card.span4{grid-column:span 6}
+  @media(min-width:760px){
+    .card.span3{grid-column:span 3}.card.span2{grid-column:span 2}.card.span4{grid-column:span 4}
+  }
+  .card.feature-hero{grid-column:span 6;background:linear-gradient(135deg,rgba(91,59,224,.22),rgba(255,108,196,.12));border-color:rgba(124,92,255,.35)}
+  @media(min-width:760px){.card.feature-hero{grid-column:span 4}}
+  .card.feature-hero .ic{background:var(--grad);border:none;color:#fff}
+
+  /* AI chat demo */
+  .ai-demo{background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:22px;font-family:var(--mono);font-size:.9rem}
+  .ai-q{background:var(--grad);color:#fff;border-radius:14px 14px 4px 14px;padding:12px 15px;display:inline-block;max-width:85%;font-family:var(--sans);font-weight:600}
+  .ai-a{margin-top:14px;color:var(--muted);border-radius:4px 14px 14px 14px}
+  .ai-a b{color:var(--teal)}
+  .ai-track{display:flex;align-items:center;gap:12px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:12px;font-family:var(--sans)}
+  .ai-track .sw{width:34px;height:34px;border-radius:8px;flex:0 0 auto}
+
+  /* themes strip */
+  .swatches{display:flex;gap:14px;flex-wrap:wrap;margin-top:40px}
+  .sw-card{width:96px;text-align:center}
+  .sw-card .chip{height:96px;border-radius:18px;box-shadow:0 14px 34px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.08)}
+  .sw-card span{display:block;margin-top:10px;font-size:.82rem;color:var(--muted)}
+
+  /* comparison */
+  .vs{display:grid;gap:16px;margin-top:40px;grid-template-columns:1fr}
+  @media(min-width:820px){.vs{grid-template-columns:1fr 1fr}}
+  .vs-col{border:1px solid var(--line);border-radius:20px;padding:26px}
+  .vs-col.them{background:var(--surface);}
+  .vs-col.us{background:linear-gradient(160deg,rgba(59,224,199,.1),rgba(124,92,255,.12));border-color:rgba(124,92,255,.35)}
+  .vs-col h3{font-size:1.15rem;margin-bottom:6px}
+  .vs-col .tag{font-family:var(--mono);font-size:.72rem;letter-spacing:.18em;text-transform:uppercase}
+  .vs-col.them .tag{color:var(--faint)} .vs-col.us .tag{color:var(--teal)}
+  .vlist{list-style:none;padding:0;margin:18px 0 0;display:flex;flex-direction:column;gap:13px}
+  .vlist li{display:flex;gap:12px;align-items:flex-start;font-size:.98rem}
+  .vlist .m{flex:0 0 auto;margin-top:2px}
+  .vlist.them li{color:var(--muted)}
+
+  /* final cta */
+  .final{text-align:center;padding:96px 0}
+  .final .card2{background:linear-gradient(150deg,rgba(91,59,224,.25),rgba(255,108,196,.14));border:1px solid rgba(124,92,255,.35);
+    border-radius:30px;padding:60px 28px;position:relative;overflow:hidden}
+  .final h2{font-size:clamp(2rem,5vw,3.3rem)}
+  .final p{color:var(--muted);margin:18px auto 0;max-width:46ch;font-size:1.1rem}
+
+  footer{border-top:1px solid var(--line);padding:40px 0 60px;color:var(--faint);font-size:.9rem}
+  .foot{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}
+  .foot a{color:var(--muted)} .foot a:hover{color:var(--ink)}
+
+  @media (prefers-reduced-motion: reduce){
+    .reveal{transition:none;opacity:1;transform:none}
+    #aurora{display:none}
+    body::before{content:"";position:fixed;inset:0;z-index:-2;background:
+      radial-gradient(60% 50% at 20% 0,rgba(124,92,255,.28),transparent),
+      radial-gradient(50% 40% at 90% 20%,rgba(255,108,196,.2),transparent),
+      radial-gradient(50% 50% at 60% 90%,rgba(59,224,199,.16),transparent)}
+  }
+</style>
+</head>
+<body>
+<canvas id="aurora"></canvas>
+<div class="grain"></div>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#top">
+      <span class="mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round">
+          <line x1="4" y1="9" x2="4" y2="15"/><line x1="9" y1="5" x2="9" y2="19"/>
+          <line x1="14" y1="8" x2="14" y2="16"/><line x1="19" y1="10.5" x2="19" y2="13.5"/>
+        </svg>
+      </span>
+      Sonora
+    </a>
+    <div class="spacer"></div>
+    <a class="link" href="#features">Features</a>
+    <a class="link" href="#ai">AI</a>
+    <a class="link" href="#why">Why Sonora</a>
+    <a class="btn ghost" href="https://github.com/SikamikanikoBG/Sonora" target="_blank" rel="noopener">GitHub ★</a>
+    <a class="btn primary" href="https://github.com/SikamikanikoBG/Sonora/releases/latest" target="_blank" rel="noopener">Download</a>
+  </div>
+</header>
+
+<a id="top"></a>
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="reveal in">
+      <p class="eyebrow">Self-hosted · AI-native · Free forever</p>
+      <h1>Your music.<br>Your server.<br><span class="grad-text">Your own AI.</span></h1>
+      <p class="sub">Sonora is a beautiful Android music player for the library <em>you</em> own — streamed from your home server and your phone, with an AI that runs on <em>your</em> hardware. No cloud. No account. No one watching.</p>
+      <div class="cta-row">
+        <a class="btn primary" href="https://github.com/SikamikanikoBG/Sonora/releases/latest" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+          Download the APK
+        </a>
+        <a class="btn" href="https://github.com/SikamikanikoBG/Sonora" target="_blank" rel="noopener">Star on GitHub</a>
+      </div>
+      <div class="pill-row">
+        <span><i class="dot v"></i>Subsonic / Navidrome + local files</span>
+        <span><i class="dot"></i>Runs on your Ollama</span>
+        <span><i class="dot p"></i>MIT open source</span>
+      </div>
+    </div>
+
+    <div class="phone-stage reveal in">
+      <div class="glow"></div>
+      <div class="badge-float bf1">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2l2.2 5.6L20 8l-4 4 1 6-5-3-5 3 1-6-4-4 5.8-.4z"/></svg></span>
+        AI DJ · “chill for coding”
+      </div>
+      <div class="badge-float bf2">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12a8 8 0 0116 0M7.5 12a4.5 4.5 0 019 0"/><circle cx="12" cy="12" r="1.6" fill="#fff" stroke="none"/></svg></span>
+        World radio · live
+      </div>
+      <div class="phone">
+        <div class="screen">
+          <div class="np-art"></div>
+          <div class="np">
+            <div class="top"><span>Now Playing</span><span>◔ 21:14</span></div>
+            <div class="cover">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M9 18V6l10-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>
+            </div>
+            <div class="meta">
+              <div class="title">Aurora Skies</div>
+              <div class="artist">from your library</div>
+              <div class="bar"><i></i></div>
+              <div class="ctrl">
+                <svg viewBox="0 0 24 24" fill="#fff"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" transform="scale(-1,1) translate(-24,0)"/></svg>
+                <div class="play"><svg viewBox="0 0 24 24" fill="#111"><path d="M8 5v14l11-7z"/></svg></div>
+                <svg viewBox="0 0 24 24" fill="#fff"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <p class="eyebrow">Everything a player should be</p>
+      <h2>One app for the whole library you actually own.</h2>
+      <p>Server and phone, blended into one. Wrapped in a player that's fast, gorgeous, and completely yours.</p>
+    </div>
+    <div class="bento">
+      <div class="card feature-hero reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+        <h3>Your library, everywhere</h3>
+        <p>Stream from your own Subsonic / Navidrome server, and blend in the MP3s on your phone and SD card — one seamless collection in search, shuffle, and browsing.</p>
+      </div>
+      <div class="card span2 reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 20h8M12 18v2"/></svg></div>
+        <h3>9 living themes</h3>
+        <p>Midnight, Aurora, Sunset, Ocean, AMOLED and more — plus colors pulled straight from the album art you're playing.</p>
+      </div>
+      <div class="card span2 reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12a8 8 0 0116 0M7.5 12a4.5 4.5 0 019 0"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg></div>
+        <h3>World radio</h3>
+        <p>Thousands of live internet stations. Hit “surprise me” and land somewhere new — Lagos, Reykjavík, anywhere.</p>
+      </div>
+      <div class="card span2 reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M4 12h10M4 18h7M18 5v10"/><circle cx="18" cy="16" r="2.5"/></svg></div>
+        <h3>Synced lyrics &amp; chords</h3>
+        <p>Time-synced, auto-scrolling lyrics that follow the song — plus one-tap guitar chords.</p>
+      </div>
+      <div class="card span3 reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M5 6h14M5 18h9"/><path d="M17 16l2 2 2-2"/></svg></div>
+        <h3>Made to feel effortless</h3>
+        <p>Swipe to change tracks, swipe up for the album, drag to reorder your queue, multi-select to build a mix, favourites, offline caching, sleep timer — and it resumes exactly where you left off.</p>
+      </div>
+      <div class="card span3 reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+        <h3>Private by design</h3>
+        <p>Nothing leaves your network. No account, no sign-up, no tracking, no profiling. Your listening stays between you and your own server.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="ai">
+  <div class="wrap">
+    <div class="hero-grid" style="align-items:start">
+      <div class="reveal">
+        <p class="eyebrow">The first truly private music AI</p>
+        <h2 style="font-size:clamp(1.9rem,4vw,2.9rem);margin-top:14px">An AI that runs on <span class="grad-text">your</span> machine.</h2>
+        <p class="muted" style="margin-top:18px;font-size:1.06rem">Point Sonora at your own Ollama server and it becomes a music companion — building queues from a vibe, keeping the music going, and teaching you about what's playing. It never phones home to a cloud.</p>
+        <ul class="vlist" style="margin-top:26px">
+          <li><span class="m">🎧</span><div><b style="color:var(--ink)">AI DJ &amp; Smart Radio</b> — “upbeat 90s for the gym” becomes a queue from your library, and it keeps refilling itself.</div></li>
+          <li><span class="m">📖</span><div><b style="color:var(--ink)">Grounded insights</b> — facts pulled from Wikipedia so the AI tells you real history, not hallucinations.</div></li>
+          <li><span class="m">🔮</span><div><b style="color:var(--ink)">Discovery</b> — find similar songs; if it's in your library you play it, if not you preview it in-app.</div></li>
+          <li><span class="m">🌍</span><div><b style="color:var(--ink)">Translate &amp; explain lyrics</b>, ask anything about a track, or just talk to it with your voice.</div></li>
+        </ul>
+      </div>
+      <div class="reveal">
+        <div class="ai-demo">
+          <div style="text-align:right"><span class="ai-q">make me a rainy-night jazz mix 🌧️</span></div>
+          <div class="ai-a">Pulling <b>34 tracks</b> across 6 albums from your library…</div>
+          <div class="ai-track"><span class="sw" style="background:linear-gradient(135deg,#5B3BE0,#3BE0C7)"></span><div><div style="font-weight:700;font-size:.92rem">Blue in Green</div><div style="font-size:.78rem;color:var(--faint)">Miles Davis · in your library</div></div></div>
+          <div class="ai-track"><span class="sw" style="background:linear-gradient(135deg,#FF6CC4,#7C5CFF)"></span><div><div style="font-weight:700;font-size:.92rem">Naima</div><div style="font-size:.78rem;color:var(--faint)">John Coltrane · in your library</div></div></div>
+          <div class="ai-a" style="margin-top:14px">▶ Now playing — private, on <b>your</b> Ollama.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <p class="eyebrow">Dress it your way</p>
+      <h2>Themes that shift with your mood — and your music.</h2>
+      <p>Pick from nine hand-crafted palettes, or let Sonora tint the player to the album art playing right now.</p>
+    </div>
+    <div class="swatches reveal">
+      <div class="sw-card"><div class="chip" style="background:linear-gradient(150deg,#5B3BE0,#9A6CFF)"></div><span>Midnight</span></div>
+      <div class="sw-card"><div class="chip" style="background:linear-gradient(150deg,#12B39B,#4FD1C5)"></div><span>Aurora</span></div>
+      <div class="sw-card"><div class="chip" style="background:linear-gradient(150deg,#FF7A45,#FF4DA6)"></div><span>Sunset</span></div>
+      <div class="sw-card"><div class="chip" style="background:linear-gradient(150deg,#0EA5E9,#22D3EE)"></div><span>Ocean</span></div>
+      <div class="sw-card"><div class="chip" style="background:linear-gradient(150deg,#16A34A,#4ADE80)"></div><span>Forest</span></div>
+      <div class="sw-card"><div class="chip" style="background:linear-gradient(150deg,#EC4899,#F9A8D4)"></div><span>Rosé</span></div>
+      <div class="sw-card"><div class="chip" style="background:linear-gradient(150deg,#000,#3BE0C7)"></div><span>AMOLED</span></div>
+      <div class="sw-card"><div class="chip" style="background:linear-gradient(150deg,#E5E7EB,#c7b8ff)"></div><span>Daylight</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <p class="eyebrow">Why Sonora</p>
+      <h2>The streaming apps rent you a catalog. Sonora hands you the keys.</h2>
+    </div>
+    <div class="vs">
+      <div class="vs-col them reveal">
+        <span class="tag">The usual streaming app</span>
+        <h3>Rented, watched, paywalled</h3>
+        <ul class="vlist them">
+          <li><span class="m">✕</span>A catalog you never own — songs vanish when licensing changes</li>
+          <li><span class="m">✕</span>Your taste is data — profiled, sold, fed back as ads</li>
+          <li><span class="m">✕</span>A monthly bill, forever</li>
+          <li><span class="m">✕</span>One look, take it or leave it</li>
+          <li><span class="m">✕</span>Closed source — you trust their word</li>
+        </ul>
+      </div>
+      <div class="vs-col us reveal">
+        <span class="tag">Sonora</span>
+        <h3>Owned, private, yours</h3>
+        <ul class="vlist">
+          <li><span class="m">✓</span>Your own files &amp; server — nothing can be taken away</li>
+          <li><span class="m">✓</span>AI on your hardware — your listening never leaves home</li>
+          <li><span class="m">✓</span>Free forever, no account, no subscription</li>
+          <li><span class="m">✓</span>Nine themes + album-art auto-theming</li>
+          <li><span class="m">✓</span>MIT open source — read every line, build it yourself</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="final">
+  <div class="wrap">
+    <div class="card2 reveal">
+      <p class="eyebrow" style="justify-content:center">Free · Open source · Yours</p>
+      <h2 style="margin-top:14px">Take your music back.</h2>
+      <p>Install Sonora, point it at your server, and let your own AI DJ take the night. It even updates itself.</p>
+      <div class="cta-row" style="justify-content:center;margin-top:30px">
+        <a class="btn primary" href="https://github.com/SikamikanikoBG/Sonora/releases/latest" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+          Download the APK
+        </a>
+        <a class="btn" href="https://github.com/SikamikanikoBG/Sonora" target="_blank" rel="noopener">View source on GitHub</a>
+      </div>
+      <p class="muted" style="font-size:.86rem;margin-top:22px">Android 8+. Needs a Subsonic/Navidrome server or local files. AI features are optional and use your own Ollama.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot">
+    <div class="brand" style="font-size:1rem">
+      <span class="mark" style="width:26px;height:26px"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><line x1="4" y1="9" x2="4" y2="15"/><line x1="9" y1="5" x2="9" y2="19"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="19" y1="10.5" x2="19" y2="13.5"/></svg></span>
+      Sonora
+    </div>
+    <div>Built for people who love their music. MIT licensed.</div>
+    <div style="display:flex;gap:20px">
+      <a href="https://github.com/SikamikanikoBG/Sonora" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/SikamikanikoBG/Sonora/releases/latest" target="_blank" rel="noopener">Releases</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // reveal on scroll
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  },{threshold:.14});
+  document.querySelectorAll('.reveal').forEach(function(el){ io.observe(el); });
+
+  if(reduce) return;
+  // aurora canvas
+  var c = document.getElementById('aurora'), x = c.getContext('2d'), W,H,t=0;
+  var blobs=[
+    {h:'124,92,255',r:.55,ax:.20,ay:.10,sx:.00013,sy:.00017,px:0},
+    {h:'255,108,196',r:.42,ax:.82,ay:.22,sx:.00017,sy:.00011,px:2},
+    {h:'59,224,199',r:.46,ax:.62,ay:.86,sx:.00011,sy:.00015,px:4},
+    {h:'91,59,224',r:.5,ax:.10,ay:.82,sx:.00015,sy:.00012,px:1}
+  ];
+  function resize(){ W=c.width=innerWidth; H=c.height=innerHeight; }
+  addEventListener('resize',resize); resize();
+  function frame(){
+    t++; x.clearRect(0,0,W,H);
+    x.globalCompositeOperation='lighter';
+    blobs.forEach(function(b){
+      var cx=(b.ax+Math.sin(t*b.sx+b.px)*.12)*W;
+      var cy=(b.ay+Math.cos(t*b.sy+b.px)*.12)*H;
+      var rad=Math.min(W,H)*b.r;
+      var g=x.createRadialGradient(cx,cy,0,cx,cy,rad);
+      g.addColorStop(0,'rgba('+b.h+',.32)');
+      g.addColorStop(1,'rgba('+b.h+',0)');
+      x.fillStyle=g; x.beginPath(); x.arc(cx,cy,rad,0,7); x.fill();
+    });
+    requestAnimationFrame(frame);
+  }
+  frame();
+})();
+</script>
+</body>
+</html>
