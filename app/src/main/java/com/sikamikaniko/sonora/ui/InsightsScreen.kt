@@ -86,7 +86,7 @@ fun InsightsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Thinking…", color = MaterialTheme.colorScheme.primary) }
                 } else {
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
-                        Text(text.ifBlank { "Pick a topic above, or ask anything below." }, style = MaterialTheme.typography.bodyLarge)
+                        MarkdownText(text.ifBlank { "Pick a topic above, or ask anything below." }, style = MaterialTheme.typography.bodyLarge)
                         Spacer(Modifier.height(16.dp))
                         Text("✨ AI-generated — may be imperfect.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }

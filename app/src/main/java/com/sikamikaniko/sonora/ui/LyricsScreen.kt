@@ -83,7 +83,7 @@ fun LyricsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
                     if (aiText.isBlank()) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Thinking…", color = MaterialTheme.colorScheme.primary) }
                     } else {
-                        Text(aiText, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp))
+                        MarkdownText(aiText, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp))
                     }
                 }
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
