@@ -3,6 +3,7 @@ package com.sikamikaniko.sonora.data
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -106,6 +107,9 @@ object AiClient {
                 val raw = StringBuilder()
                 var emitted = 0
                 while (!source.exhausted()) {
+                    // Stop promptly if the caller's coroutine was cancelled (e.g. the user
+                    // navigated away) so a stale stream can't keep writing to shared state.
+                    if (!isActive) return@withContext false
                     val line = source.readUtf8Line() ?: break
                     if (line.isBlank()) continue
                     val obj = JsonParser.parseString(line).asJsonObject

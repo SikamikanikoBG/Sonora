@@ -45,6 +45,7 @@ import com.sikamikaniko.sonora.data.Updater
 import com.sikamikaniko.sonora.playback.PlaybackService
 import com.sikamikaniko.sonora.playback.PlayerCache
 import java.util.UUID
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -230,7 +231,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         aiInsights(if (!title.isNullOrBlank()) "song" else if (!album.isNullOrBlank()) "album" else "artist")
     }
     fun openInsightsCurrent() = openInsights(_title.value, _artist.value, _albumTitle.value)
-    fun closeInsights() { _insightTarget.value = null; _aiText.value = ""; _aiStreaming.value = false }
+    fun closeInsights() { _insightTarget.value = null; stopAiStream(); _aiText.value = "" }
 
     // ---- Local device library ----
     private val _localSongs = MutableStateFlow<List<Song>>(emptyList())
@@ -293,6 +294,24 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     /** Shown in the AI panels when the model/server can't be reached, so a failure is never silent. */
     private val aiUnreachable =
         "⚠️ Couldn't reach your AI. Check the Ollama server URL and model in Settings — and your connection."
+
+    // All AI answer surfaces (About / Ask / Lyrics tools) share _aiText, so only ONE stream may
+    // write at a time. Track it so starting a new one CANCELS the old (no cross-screen bleed),
+    // and closing a screen stops it. The `finally` only resets the flag if it still owns the job.
+    private var aiStreamJob: Job? = null
+    /** Cancel any in-flight AI answer stream and clear the streaming flag. */
+    fun stopAiStream() { aiStreamJob?.cancel(); aiStreamJob = null; _aiStreaming.value = false }
+    private fun launchAiStream(block: suspend () -> Unit) {
+        aiStreamJob?.cancel()
+        _aiText.value = ""
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            _aiStreaming.value = true
+            try { block() }
+            finally { if (aiStreamJob === coroutineContext[Job]) _aiStreaming.value = false }
+        }
+        aiStreamJob = job
+        job.start()
+    }
     private val _aiBusy = MutableStateFlow(false)
     val aiBusy: StateFlow<Boolean> = _aiBusy.asStateFlow()
     private val _aiStatus = MutableStateFlow<String?>(null)
@@ -369,7 +388,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             _aiModelsLoading.value = false
         }
     }
-    fun clearAiText() { _aiText.value = ""; _aiStreaming.value = false }
+    fun clearAiText() { stopAiStream(); _aiText.value = "" }
 
     private suspend fun pickAlbums(prompt: String, count: Int): List<Album> {
         var lib = _albums.value
@@ -499,20 +518,25 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshInsight() = aiInsights(_lastInsightTopic.value, force = true)
 
     /** AI insights about the current music. topic = song | album | artist | era | songwriter. */
-    fun aiInsights(topic: String = "song", force: Boolean = false) = viewModelScope.launch {
-        if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
-        if (_aiStreaming.value) return@launch
+    fun aiInsights(topic: String = "song", force: Boolean = false) {
+        if (!aiReady) { stopAiStream(); _aiText.value = "Set up AI in Settings first."; return }
         _lastInsightTopic.value = topic
         val tgt = _insightTarget.value
         val t = tgt?.title ?: _title.value ?: ""
         val ar = tgt?.artist ?: _artist.value ?: ""
         val al = tgt?.album ?: _albumTitle.value ?: ""
-        val cacheKey = "$topic|$t|$ar|$al".lowercase()
+        // Artist/era/songwriter blurbs don't depend on the specific song title, so keep it out
+        // of the key — otherwise two songs by the same artist never share a cached artist blurb.
+        val cacheKey = when (topic) {
+            "artist" -> "artist|$ar"
+            "album" -> "album|$al|$ar"
+            "era" -> "era|$ar|$al"
+            else -> "$topic|$t|$ar|$al"
+        }.lowercase()
         if (!force) {
-            insightCache[cacheKey]?.let { _aiText.value = it; _aiStreaming.value = false; return@launch }
+            insightCache[cacheKey]?.let { stopAiStream(); _aiText.value = it; return }
         }
-        _aiText.value = ""
-        _aiStreaming.value = true
+        launchAiStream {
         // Retrieval-augmented grounding: pull real facts from Wikipedia first.
         val wikiQuery = when (topic) {
             "album" -> "$al album $ar"
@@ -539,10 +563,13 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user))) { tok ->
             _aiText.value += tok
         }
-        _aiStreaming.value = false
-        when {
-            ok && _aiText.value.isNotBlank() -> insightCache[cacheKey] = _aiText.value
-            _aiText.value.isBlank() -> _aiText.value = aiUnreachable
+        // Only the still-live stream may write results — a cancelled one must not clobber _aiText.
+        if (coroutineContext[Job]?.isActive == true) {
+            when {
+                ok && _aiText.value.isNotBlank() -> insightCache[cacheKey] = _aiText.value
+                _aiText.value.isBlank() -> _aiText.value = aiUnreachable
+            }
+        }
         }
     }
 
@@ -570,8 +597,8 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun loadSimilar(title: String? = null, artist: String? = null) = viewModelScope.launch {
         val t = (title ?: _title.value ?: "").trim()
         val ar = (artist ?: _artist.value ?: "").trim()
+        if (!aiReady || t.isBlank()) { _similar.value = emptyList(); _similarSeed.value = null; return@launch }
         _similarSeed.value = if (t.isNotBlank()) "$t · $ar" else null
-        if (!aiReady || t.isBlank()) { _similar.value = emptyList(); return@launch }
         if (_similarLoading.value) return@launch
         _similarLoading.value = true
         _similar.value = emptyList()
@@ -617,8 +644,8 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val res = Subsonic.api?.search3("$title $artist", songCount = 10)?.response?.searchResult3?.song ?: emptyList()
         res.firstOrNull {
             it.title?.equals(title, true) == true &&
-                (artist.isBlank() || it.artist?.contains(artist, true) == true || artist.contains(it.artist ?: " ", true))
-        } ?: res.firstOrNull { it.title?.contains(title, true) == true }
+                (artist.isBlank() || looseMatch(it.artist, artist, 4))
+        } ?: res.firstOrNull { looseMatch(it.title, title, 5) }
     } catch (_: Exception) { null }
 
     /** Real owned songs to choose from: same genre + same artist (+ local device tracks of that genre). */
@@ -677,57 +704,63 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun findInLibrary(title: String, artist: String): Song? = try {
         val res = Subsonic.api?.search3("$title $artist", songCount = 8)?.response?.searchResult3?.song ?: emptyList()
-        res.firstOrNull {
-            (it.title?.contains(title, true) == true || title.contains(it.title ?: " ", true)) &&
-                (it.artist?.contains(artist, true) == true || artist.contains(it.artist ?: " ", true))
-        }
+        res.firstOrNull { looseMatch(it.title, title, 5) && looseMatch(it.artist, artist, 4) }
     } catch (_: Exception) { null }
+
+    /**
+     * Fuzzy-but-safe match. Exact (case/space-insensitive) always counts; a substring only
+     * counts when the shorter string is long enough that it cannot accidentally match
+     * (avoids "One" in "Someone", or a blank/null title matching everything).
+     */
+    private fun looseMatch(a: String?, b: String?, minSub: Int): Boolean {
+        val x = a?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return false
+        val y = b?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return false
+        if (x == y) return true
+        val (short, long) = if (x.length <= y.length) x to y else y to x
+        return short.length >= minSub && long.contains(short)
+    }
 
     fun playSimilar(item: SimilarItem) { item.librarySong?.let { playSongs(listOf(it), 0) } }
     fun queueSimilar(item: SimilarItem) { item.librarySong?.let { addToQueue(listOf(it)) } }
     fun youtubeQuery(item: SimilarItem) = "${item.title} ${item.artist}"
 
     /** Free-form question about the currently playing music (streaming). */
-    fun aiAsk(question: String) = viewModelScope.launch {
-        if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
-        if (question.isBlank()) return@launch
-        if (_aiStreaming.value) return@launch
-        _aiText.value = ""
-        _aiStreaming.value = true
-        val tgt = _insightTarget.value
-        val cTitle = tgt?.title ?: _title.value ?: ""
-        val cArtist = tgt?.artist ?: _artist.value ?: ""
-        val cAlbum = tgt?.album ?: _albumTitle.value
-        val ctx = "Context: \"$cTitle\" by $cArtist" + (cAlbum?.let { " (album \"$it\")" } ?: "") + "."
-        val reference = Wikipedia.lookup("$cArtist ${cAlbum ?: cTitle}")
-        val sys = "You are a knowledgeable, friendly music companion. Answer briefly (2-4 sentences), plain text. " +
-            (if (reference != null) "Prefer the REFERENCE facts below; if the answer isn't in them and you're unsure, say so rather than guessing. " else "") +
-            antiHallucination + " " + styleHint()
-        val userMsg = "$ctx Question: $question" + (reference?.let { "\n\nREFERENCE (from Wikipedia):\n$it" } ?: "")
-        val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", userMsg))) { tok ->
-            _aiText.value += tok
+    fun aiAsk(question: String) {
+        if (!aiReady) { stopAiStream(); _aiText.value = "Set up AI in Settings first."; return }
+        if (question.isBlank()) return
+        launchAiStream {
+            val tgt = _insightTarget.value
+            val cTitle = tgt?.title ?: _title.value ?: ""
+            val cArtist = tgt?.artist ?: _artist.value ?: ""
+            val cAlbum = tgt?.album ?: _albumTitle.value
+            val ctx = "Context: \"$cTitle\" by $cArtist" + (cAlbum?.let { " (album \"$it\")" } ?: "") + "."
+            val reference = Wikipedia.lookup("$cArtist ${cAlbum ?: cTitle}")
+            val sys = "You are a knowledgeable, friendly music companion. Answer briefly (2-4 sentences), plain text. " +
+                (if (reference != null) "Prefer the REFERENCE facts below; if the answer isn't in them and you're unsure, say so rather than guessing. " else "") +
+                antiHallucination + " " + styleHint()
+            val userMsg = "$ctx Question: $question" + (reference?.let { "\n\nREFERENCE (from Wikipedia):\n$it" } ?: "")
+            val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", userMsg))) { tok ->
+                _aiText.value += tok
+            }
+            if (coroutineContext[Job]?.isActive == true && !ok && _aiText.value.isBlank()) _aiText.value = aiUnreachable
         }
-        _aiStreaming.value = false
-        if (!ok && _aiText.value.isBlank()) _aiText.value = aiUnreachable
     }
 
     /** AI on lyrics: mode = "translate" or "explain" (streaming). */
-    fun aiLyrics(mode: String) = viewModelScope.launch {
-        if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
+    fun aiLyrics(mode: String) {
+        if (!aiReady) { stopAiStream(); _aiText.value = "Set up AI in Settings first."; return }
         val lyr = _lyrics.value
-        if (lyr.isNullOrBlank()) { _aiText.value = "No lyrics to work with yet."; return@launch }
-        if (_aiStreaming.value) return@launch
-        _aiText.value = ""
-        _aiStreaming.value = true
-        val prompt = if (mode == "translate")
-            "Translate these song lyrics to ${_aiLang.value}. Keep the line breaks. Output only the translation.\n\n$lyr"
-        else
-            "In a short paragraph, explain the meaning and themes of these song lyrics. Plain text.\n\n$lyr"
-        val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("user", prompt))) { tok ->
-            _aiText.value += tok
+        if (lyr.isNullOrBlank()) { stopAiStream(); _aiText.value = "No lyrics to work with yet."; return }
+        launchAiStream {
+            val prompt = if (mode == "translate")
+                "Translate these song lyrics to ${_aiLang.value}. Keep the line breaks. Output only the translation.\n\n$lyr"
+            else
+                "In a short paragraph, explain the meaning and themes of these song lyrics. Plain text.\n\n$lyr"
+            val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("user", prompt))) { tok ->
+                _aiText.value += tok
+            }
+            if (coroutineContext[Job]?.isActive == true && !ok && _aiText.value.isBlank()) _aiText.value = aiUnreachable
         }
-        _aiStreaming.value = false
-        if (!ok && _aiText.value.isBlank()) _aiText.value = aiUnreachable
     }
 
     private val _cacheBytes = MutableStateFlow(0L)

@@ -159,7 +159,7 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
         QueueScreen(vm, onBack = { showQueue = false })
     }
     if (showLyrics) {
-        LyricsScreen(vm, onBack = { showLyrics = false })
+        LyricsScreen(vm, onBack = { showLyrics = false; vm.stopAiStream() })
     }
     if (insightTarget != null) {
         InsightsScreen(vm, onBack = { vm.closeInsights() })
@@ -167,7 +167,7 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     BackHandler(enabled = showPlayer || showQueue || showLyrics || insightTarget != null || selMode != SelMode.NONE) {
         when {
             insightTarget != null -> vm.closeInsights()
-            showLyrics -> showLyrics = false
+            showLyrics -> { showLyrics = false; vm.stopAiStream() }
             showQueue -> showQueue = false
             showPlayer -> showPlayer = false
             selMode != SelMode.NONE -> vm.clearSelection()
