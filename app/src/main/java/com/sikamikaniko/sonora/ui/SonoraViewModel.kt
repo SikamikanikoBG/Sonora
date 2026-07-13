@@ -37,6 +37,7 @@ import com.sikamikaniko.sonora.data.Prefs
 import com.sikamikaniko.sonora.data.RadioBrowser
 import com.sikamikaniko.sonora.data.SavedTrack
 import com.sikamikaniko.sonora.data.SearchResult3
+import com.sikamikaniko.sonora.data.Wikipedia
 import com.sikamikaniko.sonora.data.Song
 import com.sikamikaniko.sonora.data.Subsonic
 import com.sikamikaniko.sonora.data.Updater
@@ -466,16 +467,29 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val t = tgt?.title ?: _title.value ?: ""
         val ar = tgt?.artist ?: _artist.value ?: ""
         val al = tgt?.album ?: _albumTitle.value ?: ""
+        // Retrieval-augmented grounding: pull real facts from Wikipedia first.
+        val wikiQuery = when (topic) {
+            "album" -> "$al album $ar"
+            "artist" -> "$ar band musician"
+            "songwriter" -> "$t song $ar"
+            "era" -> "$ar $al"
+            else -> "$t song $ar"
+        }
+        val reference = Wikipedia.lookup(wikiQuery)
         val sys = "You are a sharp, friendly music writer. 3-4 sentences, plain text, no markdown. " +
             "Favour interesting connections (samples, influences, who-inspired-whom, cultural context) over dry facts. " +
+            (if (reference != null) "Base your answer on the REFERENCE facts below and do NOT contradict or go beyond them. " +
+                "If a detail isn't in the reference and you're not certain, say it's not documented rather than guessing. "
+            else "You have NO reference for this — so be brief and general, and clearly say you're not certain of specifics; do not invent facts. ") +
             antiHallucination + " " + styleHint()
-        val user = when (topic) {
+        val ask = when (topic) {
             "album" -> "Tell me about the album \"$al\" by $ar."
             "artist" -> "Tell me about the artist $ar — their sound, importance, and who they connect to."
             "era" -> "Place the song \"$t\" by $ar in its era, scene and genre — what was happening around it."
-            "songwriter" -> "Who wrote, composed or produced \"$t\" by $ar, and any notable story behind it? If unknown, say so briefly."
+            "songwriter" -> "Who wrote, composed or produced \"$t\" by $ar, and any notable story behind it?"
             else -> "Tell me about the song \"$t\" by $ar — its story, meaning, or how it was made."
         }
+        val user = ask + (reference?.let { "\n\nREFERENCE (from Wikipedia):\n$it" } ?: "")
         AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user))) { tok ->
             _aiText.value += tok
         }
@@ -546,9 +560,12 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val cArtist = tgt?.artist ?: _artist.value ?: ""
         val cAlbum = tgt?.album ?: _albumTitle.value
         val ctx = "Context: \"$cTitle\" by $cArtist" + (cAlbum?.let { " (album \"$it\")" } ?: "") + "."
+        val reference = Wikipedia.lookup("$cArtist ${cAlbum ?: cTitle}")
         val sys = "You are a knowledgeable, friendly music companion. Answer briefly (2-4 sentences), plain text. " +
+            (if (reference != null) "Prefer the REFERENCE facts below; if the answer isn't in them and you're unsure, say so rather than guessing. " else "") +
             antiHallucination + " " + styleHint()
-        AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", "$ctx Question: $question"))) { tok ->
+        val userMsg = "$ctx Question: $question" + (reference?.let { "\n\nREFERENCE (from Wikipedia):\n$it" } ?: "")
+        AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", userMsg))) { tok ->
             _aiText.value += tok
         }
         _aiStreaming.value = false
