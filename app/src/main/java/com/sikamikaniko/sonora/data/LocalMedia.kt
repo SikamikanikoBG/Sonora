@@ -15,14 +15,17 @@ object LocalMedia {
 
     suspend fun scan(context: Context): List<Song> = withContext(Dispatchers.IO) {
         val songs = ArrayList<Song>()
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.ALBUM,
-            MediaStore.Audio.Media.ALBUM_ID,
-            MediaStore.Audio.Media.DURATION
-        )
+        val hasGenre = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+        val projection = buildList {
+            add(MediaStore.Audio.Media._ID)
+            add(MediaStore.Audio.Media.TITLE)
+            add(MediaStore.Audio.Media.ARTIST)
+            add(MediaStore.Audio.Media.ALBUM)
+            add(MediaStore.Audio.Media.ALBUM_ID)
+            add(MediaStore.Audio.Media.DURATION)
+            add(MediaStore.Audio.Media.YEAR)
+            if (hasGenre) add(MediaStore.Audio.Media.GENRE)
+        }.toTypedArray()
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         val order = "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
 
@@ -41,6 +44,8 @@ object LocalMedia {
                     val albumCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
                     val albumIdCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
                     val durCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+                    val yearCol = c.getColumnIndex(MediaStore.Audio.Media.YEAR)
+                    val genreCol = c.getColumnIndex(MediaStore.Audio.Media.GENRE)
                     while (c.moveToNext()) {
                         val id = c.getLong(idCol)
                         val albumId = c.getLong(albumIdCol)
@@ -55,6 +60,8 @@ object LocalMedia {
                                 albumId = albumId.toString(),
                                 coverArt = artUri.toString(),
                                 duration = (c.getLong(durCol) / 1000L).toInt(),
+                                year = if (yearCol >= 0) c.getInt(yearCol).takeIf { it > 0 } else null,
+                                genre = if (genreCol >= 0) c.getString(genreCol)?.takeIf { it.isNotBlank() } else null,
                                 localUri = contentUri.toString(),
                                 artUri = artUri.toString()
                             )

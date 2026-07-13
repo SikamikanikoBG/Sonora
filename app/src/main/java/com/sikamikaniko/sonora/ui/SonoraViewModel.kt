@@ -508,27 +508,110 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     private data class SimSong(val title: String? = null, val artist: String? = null)
     private data class SimResult(val songs: List<SimSong>? = null)
 
-    /** Ask the AI for songs similar to the given (or current) song; resolve each against the library. */
+    /**
+     * Find songs similar to the given (or current) song.
+     *
+     * Small local models are bad at *recalling* similar tracks from just a title, so instead we
+     * GROUND the seed (its real genre/year from the server), build a candidate pool of songs the
+     * user actually owns (same artist + same genre), and ask the model to *pick* the closest
+     * matches by index -- a far easier, more reliable task that guarantees playable results.
+     * A grounded discovery pass then suggests cross-artist picks for the YouTube path.
+     */
     fun loadSimilar(title: String? = null, artist: String? = null) = viewModelScope.launch {
-        val t = title ?: _title.value ?: ""
-        val ar = artist ?: _artist.value ?: ""
+        val t = (title ?: _title.value ?: "").trim()
+        val ar = (artist ?: _artist.value ?: "").trim()
         _similarSeed.value = if (t.isNotBlank()) "$t · $ar" else null
         if (!aiReady || t.isBlank()) { _similar.value = emptyList(); return@launch }
         _similarLoading.value = true
         _similar.value = emptyList()
         try {
-            val sys = "You are a music discovery expert. Suggest 12 songs similar in style, mood and era to the given song — " +
-                "great for discovering new music. Use DIFFERENT artists, mixing well-known picks and deeper cuts. " +
-                "Reply ONLY as JSON: {\"songs\":[{\"title\":\"..\",\"artist\":\"..\"}]}."
-            val user = "Song: \"$t\" by $ar."
-            val json = AiClient.chat(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user)), json = true)
-            val pairs = parseSimilar(json)
-            _similar.value = pairs.map { (ti, arti) -> SimilarItem(ti, arti, findInLibrary(ti, arti)) }
+            // 1) Ground the seed: resolve its real genre / year from the server.
+            val seedHit = resolveSeed(t, ar)
+            val genre = seedHit?.genre?.takeIf { it.isNotBlank() }
+            val year = seedHit?.year
+            val seedId = seedHit?.id
+            val ctx = buildString {
+                append("\"$t\" by ${ar.ifBlank { "unknown artist" }}")
+                when {
+                    genre != null && year != null -> append(" (genre: $genre, ${year}s)")
+                    genre != null -> append(" (genre: $genre)")
+                    year != null -> append(" (${year}s)")
+                }
+            }
+
+            // 2) Build a pool of REAL songs the user owns: same artist + same genre.
+            val pool = buildSimilarPool(ar, genre, seedId)
+            val libraryPicks = if (pool.size >= 4) rankPool(ctx, ar, pool) else emptyList()
+
+            // 3) Grounded discovery for the YouTube path (different artists, same lane).
+            val discovery = discoverSimilar(ctx, ar, genre, year)
+                .map { (ti, arti) -> SimilarItem(ti, arti, findInLibrary(ti, arti)) }
+
+            // Merge: owned-and-matching first, then fresh discoveries not already shown.
+            val seen = HashSet<String>()
+            fun key(it: SimilarItem) = "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}"
+            _similar.value = (libraryPicks + discovery).filter { seen.add(key(it)) }
         } catch (_: Exception) {
         } finally {
             _similarLoading.value = false
         }
     }
+
+    /** Look up the seed track on the server to recover its genre/year/id for grounding. */
+    private suspend fun resolveSeed(title: String, artist: String): Song? = try {
+        val res = Subsonic.api?.search3("$title $artist", songCount = 10)?.response?.searchResult3?.song ?: emptyList()
+        res.firstOrNull {
+            it.title?.equals(title, true) == true &&
+                (artist.isBlank() || it.artist?.contains(artist, true) == true || artist.contains(it.artist ?: " ", true))
+        } ?: res.firstOrNull { it.title?.contains(title, true) == true }
+    } catch (_: Exception) { null }
+
+    /** Real owned songs to choose from: same genre + same artist (+ local device tracks of that genre). */
+    private suspend fun buildSimilarPool(artist: String, genre: String?, seedId: String?): List<Song> {
+        val out = LinkedHashMap<String, Song>()
+        fun add(songs: List<Song>?) {
+            songs?.forEach { s -> if (s.id != seedId) out.putIfAbsent(s.id, s) }
+        }
+        try {
+            if (genre != null) add(Subsonic.api?.getSongsByGenre(genre, count = 80)?.response?.songsByGenre?.song)
+            if (artist.isNotBlank()) add(
+                Subsonic.api?.search3(artist, songCount = 40)?.response?.searchResult3?.song
+                    ?.filter { it.artist?.contains(artist, true) == true }
+            )
+            // Blend in local device tracks of the same genre so owned music isn't siloed.
+            if (genre != null) add(_localSongs.value.filter { it.genre?.equals(genre, true) == true })
+        } catch (_: Exception) {}
+        return out.values.toList()
+    }
+
+    /** Number the pool and let the model pick the closest matches by index (recall -> selection). */
+    private suspend fun rankPool(ctx: String, artist: String, pool: List<Song>): List<SimilarItem> {
+        val capped = if (pool.size > 120) pool.shuffled().take(120) else pool
+        val numbered = capped.mapIndexed { i, s ->
+            "${i + 1}. ${s.artist ?: "?"} - ${s.title ?: "?"}${s.genre?.let { " [$it]" } ?: ""}"
+        }.joinToString("\n")
+        // Instruction placed AFTER the list so context truncation can't drop it.
+        val user = "Seed song: $ctx.\n\nNumbered library of songs the listener owns:\n\n$numbered\n\n" +
+            "Task: pick the 12 songs above that are the CLOSEST match to the seed in genre, style, mood, energy and era. " +
+            "Prefer the same or adjacent genre; vary the artists; do NOT pick the seed itself. " +
+            "Reply ONLY as JSON: {\"picks\":[numbers]} using ONLY numbers from the list."
+        val json = AiClient.chat(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("user", user)), json = true)
+            ?: return emptyList()
+        return parsePicks(json).mapNotNull { capped.getOrNull(it - 1) }.distinctBy { it.id }
+            .map { SimilarItem(it.title ?: "?", it.artist ?: "?", it) }
+    }
+
+    /** Grounded discovery: cross-artist suggestions in the same lane (for the YouTube path). */
+    private suspend fun discoverSimilar(ctx: String, artist: String, genre: String?, year: Int?): List<Pair<String, String>> = try {
+        val lane = genre ?: "the same style"
+        val sys = "You are a music discovery expert with deep, accurate knowledge. Suggest 8 REAL, well-known songs that " +
+            "genuinely sound similar to the seed - same $lane, comparable mood, energy and era. Use DIFFERENT artists than " +
+            "the seed. Only suggest songs you are confident actually exist; never invent titles. " +
+            "Reply ONLY as JSON: {\"songs\":[{\"title\":\"..\",\"artist\":\"..\"}]}."
+        val user = "Seed song: $ctx." + (year?.let { " Stay close to the ${it}s." } ?: "")
+        val json = AiClient.chat(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user)), json = true)
+        parseSimilar(json).filter { (_, a) -> a.isNotBlank() && !a.equals(artist, true) }
+    } catch (_: Exception) { emptyList() }
 
     private fun parseSimilar(json: String?): List<Pair<String, String>> = try {
         if (json.isNullOrBlank()) emptyList()

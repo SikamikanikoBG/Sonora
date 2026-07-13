@@ -25,8 +25,11 @@ data class SubsonicResponse(
     val playlist: PlaylistWithSongs?,
     val starred2: Starred2?,
     val genres: Genres?,
+    val songsByGenre: SongsByGenre? = null,
     val lyrics: Lyrics? = null
 )
+
+data class SongsByGenre(val song: List<Song>? = null)
 
 data class Genres(val genre: List<Genre>?)
 data class Genre(val value: String?, val songCount: Int? = null, val albumCount: Int? = null)
@@ -120,6 +123,7 @@ data class Song(
     val duration: Int? = null,
     val track: Int? = null,
     val year: Int? = null,
+    val genre: String? = null,
     val starred: String? = null,
     val contentType: String? = null,
     val suffix: String? = null,

@@ -65,6 +65,13 @@ interface SubsonicApi {
     @GET("getRandomSongs.view")
     suspend fun getRandomSongs(@Query("size") size: Int = 50): SubsonicEnvelope
 
+    @GET("getSongsByGenre.view")
+    suspend fun getSongsByGenre(
+        @Query("genre") genre: String,
+        @Query("count") count: Int = 60,
+        @Query("offset") offset: Int = 0
+    ): SubsonicEnvelope
+
     @GET("getPlaylists.view")
     suspend fun getPlaylists(): SubsonicEnvelope
 
