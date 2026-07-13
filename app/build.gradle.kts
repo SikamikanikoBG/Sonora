@@ -24,8 +24,12 @@ android {
         applicationId = "com.sikamikaniko.sonora"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.6.1"
+        versionCode = 16
+        versionName = "1.7.0"
+
+        // Ads are ON only for the official signed build (CI has the keystore).
+        // Anyone self-compiling gets no keystore -> no ads.
+        buildConfigField("boolean", "ADS_ENABLED", hasKeystore.toString())
     }
 
     signingConfigs {
@@ -113,6 +117,9 @@ dependencies {
     // Image loading + colour extraction
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("androidx.palette:palette-ktx:1.0.0")
+
+    // Ads (only shown in the official signed build — see ADS_ENABLED)
+    implementation("com.google.android.gms:play-services-ads:23.6.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

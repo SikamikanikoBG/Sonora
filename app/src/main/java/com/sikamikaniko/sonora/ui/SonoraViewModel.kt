@@ -32,9 +32,12 @@ import com.sikamikaniko.sonora.data.LocalMedia
 import com.sikamikaniko.sonora.data.OnlineLyrics
 import com.sikamikaniko.sonora.data.Playlist
 import com.sikamikaniko.sonora.data.PlaylistWithSongs
+import com.sikamikaniko.sonora.data.PlaybackSnapshot
 import com.sikamikaniko.sonora.data.Prefs
 import com.sikamikaniko.sonora.data.RadioBrowser
+import com.sikamikaniko.sonora.data.SavedTrack
 import com.sikamikaniko.sonora.data.SearchResult3
+import com.sikamikaniko.sonora.data.Wikipedia
 import com.sikamikaniko.sonora.data.Song
 import com.sikamikaniko.sonora.data.Subsonic
 import com.sikamikaniko.sonora.data.Updater
@@ -148,6 +151,18 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     } catch (_: Exception) { emptyList() }
     private fun persistFavStations() { prefs.favStationsJson = aiGson.toJson(_favStations.value) }
 
+    // Recently played stations, for the Home "Recent radio" rail.
+    private val _recentStations = MutableStateFlow(loadRecentStations())
+    val recentStations: StateFlow<List<RadioBrowser.Station>> = _recentStations.asStateFlow()
+    private fun loadRecentStations(): List<RadioBrowser.Station> = try {
+        aiGson.fromJson(prefs.recentStationsJson, Array<RadioBrowser.Station>::class.java)?.toList() ?: emptyList()
+    } catch (_: Exception) { emptyList() }
+    private fun addRecentStation(s: RadioBrowser.Station) {
+        val list = (listOf(s) + _recentStations.value.filter { it.stationuuid != s.stationuuid }).take(12)
+        _recentStations.value = list
+        prefs.recentStationsJson = aiGson.toJson(list)
+    }
+
     fun loadTopStations() = viewModelScope.launch {
         _radioLoading.value = true; _radioGenre.value = null
         _stations.value = RadioBrowser.top(60)
@@ -184,6 +199,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             .setMediaMetadata(meta)
             .build()
         c.setMediaItems(listOf(item)); c.prepare(); c.play()
+        addRecentStation(s)
     }
     fun isFavStation(uuid: String) = _favStations.value.any { it.stationuuid == uuid }
     fun toggleFavStation(s: RadioBrowser.Station) {
@@ -447,19 +463,33 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
         _aiText.value = ""
         _aiStreaming.value = true
-        val t = _title.value ?: ""
-        val ar = _artist.value ?: ""
-        val al = _albumTitle.value ?: ""
+        val tgt = _insightTarget.value
+        val t = tgt?.title ?: _title.value ?: ""
+        val ar = tgt?.artist ?: _artist.value ?: ""
+        val al = tgt?.album ?: _albumTitle.value ?: ""
+        // Retrieval-augmented grounding: pull real facts from Wikipedia first.
+        val wikiQuery = when (topic) {
+            "album" -> "$al album $ar"
+            "artist" -> "$ar band musician"
+            "songwriter" -> "$t song $ar"
+            "era" -> "$ar $al"
+            else -> "$t song $ar"
+        }
+        val reference = Wikipedia.lookup(wikiQuery)
         val sys = "You are a sharp, friendly music writer. 3-4 sentences, plain text, no markdown. " +
             "Favour interesting connections (samples, influences, who-inspired-whom, cultural context) over dry facts. " +
+            (if (reference != null) "Base your answer on the REFERENCE facts below and do NOT contradict or go beyond them. " +
+                "If a detail isn't in the reference and you're not certain, say it's not documented rather than guessing. "
+            else "You have NO reference for this — so be brief and general, and clearly say you're not certain of specifics; do not invent facts. ") +
             antiHallucination + " " + styleHint()
-        val user = when (topic) {
+        val ask = when (topic) {
             "album" -> "Tell me about the album \"$al\" by $ar."
             "artist" -> "Tell me about the artist $ar — their sound, importance, and who they connect to."
             "era" -> "Place the song \"$t\" by $ar in its era, scene and genre — what was happening around it."
-            "songwriter" -> "Who wrote, composed or produced \"$t\" by $ar, and any notable story behind it? If unknown, say so briefly."
+            "songwriter" -> "Who wrote, composed or produced \"$t\" by $ar, and any notable story behind it?"
             else -> "Tell me about the song \"$t\" by $ar — its story, meaning, or how it was made."
         }
+        val user = ask + (reference?.let { "\n\nREFERENCE (from Wikipedia):\n$it" } ?: "")
         AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user))) { tok ->
             _aiText.value += tok
         }
@@ -525,11 +555,17 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (question.isBlank()) return@launch
         _aiText.value = ""
         _aiStreaming.value = true
-        val ctx = "The user is listening to \"${_title.value ?: ""}\" by ${_artist.value ?: ""}" +
-            (_albumTitle.value?.let { " (album \"$it\")" } ?: "") + "."
+        val tgt = _insightTarget.value
+        val cTitle = tgt?.title ?: _title.value ?: ""
+        val cArtist = tgt?.artist ?: _artist.value ?: ""
+        val cAlbum = tgt?.album ?: _albumTitle.value
+        val ctx = "Context: \"$cTitle\" by $cArtist" + (cAlbum?.let { " (album \"$it\")" } ?: "") + "."
+        val reference = Wikipedia.lookup("$cArtist ${cAlbum ?: cTitle}")
         val sys = "You are a knowledgeable, friendly music companion. Answer briefly (2-4 sentences), plain text. " +
+            (if (reference != null) "Prefer the REFERENCE facts below; if the answer isn't in them and you're unsure, say so rather than guessing. " else "") +
             antiHallucination + " " + styleHint()
-        AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", "$ctx Question: $question"))) { tok ->
+        val userMsg = "$ctx Question: $question" + (reference?.let { "\n\nREFERENCE (from Wikipedia):\n$it" } ?: "")
+        AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", userMsg))) { tok ->
             _aiText.value += tok
         }
         _aiStreaming.value = false
@@ -657,7 +693,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     val updateBusy: StateFlow<Boolean> = _updateBusy.asStateFlow()
 
     private val playerListener = object : Player.Listener {
-        override fun onIsPlayingChanged(isPlaying: Boolean) { _isPlaying.value = isPlaying }
+        override fun onIsPlayingChanged(isPlaying: Boolean) { _isPlaying.value = isPlaying; savePlaybackSnapshot() }
         override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) { updateNowPlaying() }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             if (pauseAfterTrack && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
@@ -715,6 +751,60 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun consumeToast() { _toast.value = null }
 
+    // ---- Resume last session ----
+    private val _resumeEnabled = MutableStateFlow(prefs.resumeEnabled)
+    val resumeEnabled: StateFlow<Boolean> = _resumeEnabled.asStateFlow()
+    fun setResumeEnabled(v: Boolean) { prefs.resumeEnabled = v; _resumeEnabled.value = v }
+
+    private fun savePlaybackSnapshot() {
+        val c = controller ?: return
+        val n = c.mediaItemCount
+        if (n == 0) { prefs.lastPlaybackJson = null; return }
+        val tracks = (0 until n).map { i ->
+            val mi = c.getMediaItemAt(i)
+            SavedTrack(
+                mediaId = mi.mediaId,
+                uri = mi.localConfiguration?.uri?.toString() ?: "",
+                title = mi.mediaMetadata.title?.toString(),
+                artist = mi.mediaMetadata.artist?.toString(),
+                artUri = mi.mediaMetadata.artworkUri?.toString()
+            )
+        }.filter { it.uri.isNotBlank() }
+        if (tracks.isEmpty()) return
+        val snap = PlaybackSnapshot(
+            tracks = tracks,
+            index = c.currentMediaItemIndex.coerceIn(0, tracks.lastIndex),
+            positionMs = c.currentPosition.coerceAtLeast(0),
+            wasPlaying = c.isPlaying
+        )
+        prefs.lastPlaybackJson = aiGson.toJson(snap)
+    }
+
+    private fun restorePlaybackSnapshot() {
+        if (!_resumeEnabled.value) return
+        val c = controller ?: return
+        if (c.mediaItemCount > 0) return
+        val json = prefs.lastPlaybackJson ?: return
+        val snap = try { aiGson.fromJson(json, PlaybackSnapshot::class.java) } catch (_: Exception) { null } ?: return
+        if (snap.tracks.isEmpty()) return
+        val items = snap.tracks.map { t ->
+            MediaItem.Builder()
+                .setMediaId(t.mediaId)
+                .setUri(t.uri)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(t.title)
+                        .setArtist(t.artist)
+                        .apply { t.artUri?.let { setArtworkUri(Uri.parse(it)) } }
+                        .build()
+                )
+                .build()
+        }
+        c.setMediaItems(items, snap.index.coerceIn(0, items.lastIndex), snap.positionMs)
+        c.prepare()
+        if (snap.wasPlaying) c.play()
+    }
+
     private fun connectController() {
         val ctx = getApplication<Application>()
         val token = SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))
@@ -722,6 +812,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         future.addListener({
             controller = future.get()
             controller?.addListener(playerListener)
+            restorePlaybackSnapshot()
             updateNowPlaying()
             rebuildQueue()
             startPositionPoller()
@@ -730,12 +821,14 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun startPositionPoller() {
         viewModelScope.launch {
+            var tick = 0
             while (isActive) {
                 controller?.let { c ->
                     _position.value = c.currentPosition.coerceAtLeast(0)
                     val d = c.duration
                     _duration.value = if (d > 0) d else 0
                 }
+                if (++tick % 10 == 0) savePlaybackSnapshot() // persist ~every 5s
                 delay(500)
             }
         }
