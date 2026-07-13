@@ -65,6 +65,7 @@ import androidx.navigation.NavController
 import androidx.compose.ui.text.style.TextOverflow
 import com.sikamikaniko.sonora.data.AiMix
 import com.sikamikaniko.sonora.data.Album
+import com.sikamikaniko.sonora.data.RadioBrowser
 import java.time.LocalTime
 
 @Composable
@@ -74,6 +75,7 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
     val frequent by vm.frequent.collectAsState()
     val random by vm.randomAlbums.collectAsState()
     val mixes by vm.mixes.collectAsState()
+    val recentStations by vm.recentStations.collectAsState()
     val aiEnabled by vm.aiEnabled.collectAsState()
     val aiBaseUrl by vm.aiBaseUrl.collectAsState()
     val aiModel by vm.aiModel.collectAsState()
@@ -124,10 +126,24 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
                 }
             }
         }
+        if (recentStations.isNotEmpty()) {
+            item {
+                SectionHeader("Recent radio")
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(recentStations, key = { it.stationuuid }) { st ->
+                        RadioMiniCard(st) { vm.playStation(st) }
+                    }
+                }
+            }
+        }
         item { Rail("Recently added", newest, vm, nav) }
         item { Rail("Recently played", recent, vm, nav) }
         item { Rail("Most played", frequent, vm, nav) }
         item { Rail("Discover", random, vm, nav) }
+        item { BannerAd(Modifier.padding(top = 16.dp, start = 16.dp, end = 16.dp)) }
         item { Spacer(Modifier.height(28.dp)) }
     }
 }
@@ -286,6 +302,15 @@ private fun NewMixCard(onClick: () -> Unit) {
         }
         Spacer(Modifier.width(10.dp))
         Text("New mix", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun RadioMiniCard(station: RadioBrowser.Station, onClick: () -> Unit) {
+    Column(Modifier.width(120.dp).clickable(onClick = onClick)) {
+        UrlArt(station.favicon, Modifier.size(120.dp), corner = 14.dp)
+        Spacer(Modifier.height(6.dp))
+        Text(station.name ?: "Station", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
