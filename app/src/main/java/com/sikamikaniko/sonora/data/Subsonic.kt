@@ -57,7 +57,10 @@ object Subsonic {
         "$server/rest/stream.view?id=${enc(songId)}&${authQuery()}"
 
     fun coverArtUrl(coverId: String?, size: Int = 512): String? {
-        if (coverId.isNullOrBlank() || server == null) return null
+        if (coverId.isNullOrBlank()) return null
+        // Local device art is a direct URI — pass it through so Coil loads it as-is.
+        if (coverId.startsWith("content://") || coverId.startsWith("http://") || coverId.startsWith("https://")) return coverId
+        if (server == null) return null
         return "$server/rest/getCoverArt.view?id=${enc(coverId)}&size=$size&${authQuery()}"
     }
 

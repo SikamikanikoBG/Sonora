@@ -53,6 +53,7 @@ object LocalMedia {
                                 artist = c.getString(artistCol)?.takeIf { it != "<unknown>" } ?: "Unknown artist",
                                 album = c.getString(albumCol),
                                 albumId = albumId.toString(),
+                                coverArt = artUri.toString(),
                                 duration = (c.getLong(durCol) / 1000L).toInt(),
                                 localUri = contentUri.toString(),
                                 artUri = artUri.toString()

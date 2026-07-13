@@ -214,6 +214,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _scanning.value = true
         _localSongs.value = try { LocalMedia.scan(getApplication<Application>()) } catch (_: Exception) { emptyList() }
         _scanning.value = false
+        reblend() // blend the freshly-scanned device albums into Home/Library/mix
     }
 
     // ---- Recent searches ----
@@ -379,7 +380,13 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun gatherSongs(albums: List<Album>): List<Song> =
-        albums.flatMap { Subsonic.api?.getAlbum(it.id)?.response?.album?.song ?: emptyList() }
+        albums.flatMap { al ->
+            if (al.id.startsWith("localalbum-")) {
+                val albumId = al.id.removePrefix("localalbum-")
+                _localSongs.value.filter { it.albumId == albumId }
+            } else Subsonic.api?.getAlbum(al.id)?.response?.album?.song ?: emptyList()
+        }
+
 
     /** AI DJ: turn a natural-language request into a playing queue. */
     fun aiDj(prompt: String) = viewModelScope.launch {
@@ -822,12 +829,42 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- Loaders ----
+    // Raw server lists kept separately so device music can be blended in and re-blended after a scan.
+    private var srvAlbums: List<Album> = emptyList()
+    private var srvNewest: List<Album> = emptyList()
+    private var srvRandom: List<Album> = emptyList()
+
+    /** Device songs grouped into albums so they flow through the same UI as server albums. */
+    private fun localAlbums(): List<Album> =
+        _localSongs.value
+            .filter { !it.album.isNullOrBlank() }
+            .groupBy { it.albumId ?: it.album }
+            .mapNotNull { (_, s) ->
+                val f = s.first()
+                Album(
+                    id = "localalbum-${f.albumId}",
+                    name = f.album,
+                    artist = f.artist,
+                    coverArt = f.coverArt,
+                    songCount = s.size
+                )
+            }
+
+    /** Recompute the blended album lists (server + device). */
+    private fun reblend() {
+        val la = localAlbums()
+        _albums.value = srvAlbums + la
+        _newest.value = la + srvNewest
+        _randomAlbums.value = (srvRandom + la).shuffled()
+    }
+
     fun loadLibrary() = viewModelScope.launch {
         _loading.value = true; _error.value = null
         try {
             val resp = Subsonic.api?.getAlbumList2(_albumSort.value, 500)?.response
             if (resp?.error != null) _error.value = resp.error.message
-            else _albums.value = resp?.albumList2?.album ?: emptyList()
+            else srvAlbums = resp?.albumList2?.album ?: emptyList()
+            reblend()
         } catch (e: Exception) { _error.value = e.message ?: "Network error" }
         finally { _loading.value = false }
     }
@@ -894,10 +931,11 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadHome() = viewModelScope.launch {
         try {
-            _newest.value = Subsonic.api?.getAlbumList2("newest", 20)?.response?.albumList2?.album ?: emptyList()
+            srvNewest = Subsonic.api?.getAlbumList2("newest", 20)?.response?.albumList2?.album ?: emptyList()
             _recent.value = Subsonic.api?.getAlbumList2("recent", 20)?.response?.albumList2?.album ?: emptyList()
             _frequent.value = Subsonic.api?.getAlbumList2("frequent", 20)?.response?.albumList2?.album ?: emptyList()
-            _randomAlbums.value = Subsonic.api?.getAlbumList2("random", 20)?.response?.albumList2?.album ?: emptyList()
+            srvRandom = Subsonic.api?.getAlbumList2("random", 20)?.response?.albumList2?.album ?: emptyList()
+            reblend()
         } catch (_: Exception) { }
     }
 
@@ -930,6 +968,16 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openAlbum(id: String) = viewModelScope.launch {
         _error.value = null
+        if (id.startsWith("localalbum-")) {
+            val albumId = id.removePrefix("localalbum-")
+            val songs = _localSongs.value.filter { it.albumId == albumId }
+            val f = songs.firstOrNull()
+            _currentAlbum.value = AlbumWithSongs(
+                id = id, name = f?.album, artist = f?.artist,
+                coverArt = f?.coverArt, songCount = songs.size, song = songs
+            )
+            return@launch
+        }
         try { _currentAlbum.value = Subsonic.api?.getAlbum(id)?.response?.album }
         catch (e: Exception) { _error.value = e.message ?: "Could not load album" }
     }
