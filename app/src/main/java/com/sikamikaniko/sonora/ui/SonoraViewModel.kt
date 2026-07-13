@@ -287,6 +287,12 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     val aiLang: StateFlow<String> = _aiLang.asStateFlow()
     private val _aiModels = MutableStateFlow<List<String>>(emptyList())
     val aiModels: StateFlow<List<String>> = _aiModels.asStateFlow()
+    private val _aiModelsLoading = MutableStateFlow(false)
+    val aiModelsLoading: StateFlow<Boolean> = _aiModelsLoading.asStateFlow()
+
+    /** Shown in the AI panels when the model/server can't be reached, so a failure is never silent. */
+    private val aiUnreachable =
+        "⚠️ Couldn't reach your AI. Check the Ollama server URL and model in Settings — and your connection."
     private val _aiBusy = MutableStateFlow(false)
     val aiBusy: StateFlow<Boolean> = _aiBusy.asStateFlow()
     private val _aiStatus = MutableStateFlow<String?>(null)
@@ -355,7 +361,13 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun setAiLang(v: String) { prefs.aiLang = v; _aiLang.value = v }
     fun loadAiModels() = viewModelScope.launch {
-        _aiModels.value = AiClient.listModels(_aiBaseUrl.value)
+        if (_aiModelsLoading.value) return@launch
+        _aiModelsLoading.value = true
+        try {
+            _aiModels.value = AiClient.listModels(_aiBaseUrl.value)
+        } finally {
+            _aiModelsLoading.value = false
+        }
     }
     fun clearAiText() { _aiText.value = ""; _aiStreaming.value = false }
 
@@ -429,9 +441,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (_aiBusy.value) return@launch
         _aiBusy.value = true
         _aiStatus.value = "Thinking…"
+        _mixSongs.value = emptyList()
         try {
             val albums = pickAlbums(prompt, 10)
-            if (albums.isEmpty()) { _aiStatus.value = "Couldn't find matches for that"; return@launch }
+            if (albums.isEmpty()) { _aiStatus.value = "Couldn't reach the AI, or no matches — check the AI settings & your connection."; return@launch }
             _aiStatus.value = "Gathering tracks…"
             val songs = gatherSongs(albums).shuffled()
             if (songs.isEmpty()) { _aiStatus.value = "No playable tracks found"; return@launch }
@@ -523,11 +536,14 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             else -> "Tell me about the song \"$t\" by $ar — its story, meaning, or how it was made."
         }
         val user = ask + (reference?.let { "\n\nREFERENCE (from Wikipedia):\n$it" } ?: "")
-        AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user))) { tok ->
+        val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user))) { tok ->
             _aiText.value += tok
         }
         _aiStreaming.value = false
-        if (_aiText.value.isNotBlank()) insightCache[cacheKey] = _aiText.value
+        when {
+            ok && _aiText.value.isNotBlank() -> insightCache[cacheKey] = _aiText.value
+            _aiText.value.isBlank() -> _aiText.value = aiUnreachable
+        }
     }
 
     // ---- AI similar-songs discovery (AI-based, not hardcoded) ----
@@ -585,8 +601,12 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             // Merge: owned-and-matching first, then fresh discoveries not already shown.
             val seen = HashSet<String>()
             fun key(it: SimilarItem) = "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}"
-            _similar.value = (libraryPicks + discovery).filter { seen.add(key(it)) }
+            val merged = (libraryPicks + discovery).filter { seen.add(key(it)) }
+            _similar.value = merged
+            // Don't leave the user on a blank "nothing here" screen if the AI was unreachable.
+            if (merged.isEmpty()) _error.value = "Couldn't get similar songs — check your AI settings & connection."
         } catch (_: Exception) {
+            _error.value = "Couldn't get similar songs — check your AI settings & connection."
         } finally {
             _similarLoading.value = false
         }
@@ -671,6 +691,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun aiAsk(question: String) = viewModelScope.launch {
         if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
         if (question.isBlank()) return@launch
+        if (_aiStreaming.value) return@launch
         _aiText.value = ""
         _aiStreaming.value = true
         val tgt = _insightTarget.value
@@ -683,10 +704,11 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             (if (reference != null) "Prefer the REFERENCE facts below; if the answer isn't in them and you're unsure, say so rather than guessing. " else "") +
             antiHallucination + " " + styleHint()
         val userMsg = "$ctx Question: $question" + (reference?.let { "\n\nREFERENCE (from Wikipedia):\n$it" } ?: "")
-        AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", userMsg))) { tok ->
+        val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", userMsg))) { tok ->
             _aiText.value += tok
         }
         _aiStreaming.value = false
+        if (!ok && _aiText.value.isBlank()) _aiText.value = aiUnreachable
     }
 
     /** AI on lyrics: mode = "translate" or "explain" (streaming). */
@@ -694,16 +716,18 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
         val lyr = _lyrics.value
         if (lyr.isNullOrBlank()) { _aiText.value = "No lyrics to work with yet."; return@launch }
+        if (_aiStreaming.value) return@launch
         _aiText.value = ""
         _aiStreaming.value = true
         val prompt = if (mode == "translate")
             "Translate these song lyrics to ${_aiLang.value}. Keep the line breaks. Output only the translation.\n\n$lyr"
         else
             "In a short paragraph, explain the meaning and themes of these song lyrics. Plain text.\n\n$lyr"
-        AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("user", prompt))) { tok ->
+        val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("user", prompt))) { tok ->
             _aiText.value += tok
         }
         _aiStreaming.value = false
+        if (!ok && _aiText.value.isBlank()) _aiText.value = aiUnreachable
     }
 
     private val _cacheBytes = MutableStateFlow(0L)

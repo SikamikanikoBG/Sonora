@@ -18,8 +18,10 @@ import java.util.concurrent.TimeUnit
 object AiClient {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        // Per-read timeout: a healthy model streams tokens well within this; a hung
+        // or unreachable one now fails in a minute instead of leaving the user waiting.
+        .readTimeout(60, TimeUnit.SECONDS)
         .build()
     private val gson = Gson()
     private val JSON = "application/json".toMediaType()

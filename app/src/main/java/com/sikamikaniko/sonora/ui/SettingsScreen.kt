@@ -139,6 +139,7 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                 val aiModel by vm.aiModel.collectAsState()
                 val aiLang by vm.aiLang.collectAsState()
                 val models by vm.aiModels.collectAsState()
+                val modelsLoading by vm.aiModelsLoading.collectAsState()
                 var modelMenu by remember { mutableStateOf(false) }
 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -163,11 +164,22 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                         onClick = { vm.loadAiModels(); modelMenu = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (aiModel.isBlank()) "Pick a model" else aiModel)
+                        if (modelsLoading) {
+                            androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.size(8.dp))
+                        }
+                        Text(
+                            when {
+                                modelsLoading -> "Loading models…"
+                                aiModel.isBlank() -> "Pick a model"
+                                else -> aiModel
+                            }
+                        )
                     }
                     androidx.compose.material3.DropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
-                        if (models.isEmpty()) {
-                            androidx.compose.material3.DropdownMenuItem(text = { Text("No models found — check the URL") }, onClick = { modelMenu = false })
+                        when {
+                            modelsLoading -> androidx.compose.material3.DropdownMenuItem(text = { Text("Loading models…") }, onClick = { })
+                            models.isEmpty() -> androidx.compose.material3.DropdownMenuItem(text = { Text("No models found — check the server URL is reachable") }, onClick = { modelMenu = false })
                         }
                         models.forEach { m ->
                             androidx.compose.material3.DropdownMenuItem(text = { Text(m) }, onClick = { vm.setAiModel(m); modelMenu = false })
