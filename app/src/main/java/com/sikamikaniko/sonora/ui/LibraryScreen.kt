@@ -19,11 +19,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -36,12 +40,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -73,6 +82,7 @@ private val SORTS = listOf(
 @Composable
 fun LibraryScreen(vm: SonoraViewModel, nav: NavController) {
     var tab by remember { mutableIntStateOf(0) }
+    var query by remember { mutableStateOf("") }
     val titles = listOf("Albums", "Artists", "Genres", "Favourites", "Device")
 
     Column(
@@ -84,23 +94,44 @@ fun LibraryScreen(vm: SonoraViewModel, nav: NavController) {
             "Library",
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 14.dp)
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 10.dp)
         )
-        SegmentedTabs(titles = titles, selected = tab, onSelect = { tab = it })
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it; vm.search(it) },
+            leadingIcon = { Icon(Icons.Filled.Search, null) },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { query = ""; vm.search("") }) { Icon(Icons.Filled.Clear, "Clear") }
+                }
+            },
+            placeholder = { Text("Search your library") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { if (query.isNotBlank()) vm.addRecentSearch(query) }),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+        )
         Spacer(Modifier.height(8.dp))
-        Crossfade(
-            targetState = tab,
-            animationSpec = tween(220),
-            label = "libraryTab",
-            modifier = Modifier.fillMaxSize()
-        ) { t ->
-            when (t) {
-                0 -> AlbumsTab(vm, nav)
-                1 -> ArtistsTab(vm, nav)
-                2 -> GenresTab(vm, nav)
-                3 -> FavouritesTab(vm, nav)
-                else -> DeviceTab(vm)
+
+        if (query.isBlank()) {
+            SegmentedTabs(titles = titles, selected = tab, onSelect = { tab = it })
+            Spacer(Modifier.height(8.dp))
+            Crossfade(
+                targetState = tab,
+                animationSpec = tween(220),
+                label = "libraryTab",
+                modifier = Modifier.fillMaxSize()
+            ) { t ->
+                when (t) {
+                    0 -> AlbumsTab(vm, nav)
+                    1 -> ArtistsTab(vm, nav)
+                    2 -> GenresTab(vm, nav)
+                    3 -> FavouritesTab(vm, nav)
+                    else -> DeviceTab(vm)
+                }
             }
+        } else {
+            LibrarySearchResults(vm, nav, query) { query = it; vm.search(it) }
         }
     }
 }
@@ -170,6 +201,76 @@ private fun SegmentedTabs(titles: List<String>, selected: Int, onSelect: (Int) -
             }
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LibrarySearchResults(vm: SonoraViewModel, nav: NavController, query: String, onQuery: (String) -> Unit) {
+    val result by vm.searchResult.collectAsState()
+    val recent by vm.recentSearches.collectAsState()
+    val artists = result?.artist ?: emptyList()
+    val albums = result?.album ?: emptyList()
+    val songs = result?.song ?: emptyList()
+    val q = query.trim()
+    val suggestions = remember(q, recent, result) {
+        val set = LinkedHashSet<String>()
+        recent.filter { it.contains(q, true) && !it.equals(q, true) }.forEach { set.add(it) }
+        artists.mapNotNull { it.name }.filter { it.contains(q, true) && !it.equals(q, true) }.forEach { set.add(it) }
+        albums.mapNotNull { it.name }.filter { it.contains(q, true) && !it.equals(q, true) }.forEach { set.add(it) }
+        set.take(6)
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        if (suggestions.isNotEmpty()) {
+            item {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    suggestions.forEach { s -> SearchChip(s) { onQuery(s); vm.addRecentSearch(s) } }
+                }
+            }
+        }
+        if (artists.isEmpty() && albums.isEmpty() && songs.isEmpty()) {
+            item { CenterMessage("No matches for \"$query\".") }
+        }
+        if (artists.isNotEmpty()) {
+            item { SectionHeader("Artists") }
+            items(artists, key = { "ar_" + it.id }) { artist ->
+                ArtistRow(artist) { vm.addRecentSearch(query); nav.navigate("artist/${artist.id}") }
+            }
+        }
+        if (albums.isNotEmpty()) {
+            item { SectionHeader("Albums") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(albums, key = { "al_" + it.id }) { album -> AlbumRailItem(vm, nav, album) }
+                }
+            }
+        }
+        if (songs.isNotEmpty()) {
+            item {
+                PlayAllHeader(
+                    "Songs (${songs.size})",
+                    onPlay = { vm.addRecentSearch(query); vm.playSearchSongs(false) },
+                    onShuffle = { vm.addRecentSearch(query); vm.playSearchSongs(true) }
+                )
+            }
+            itemsIndexed(songs) { index, song -> SongItem(vm, nav, song, songs, index, showIndex = false) }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+@Composable
+private fun SearchChip(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) { Text(label, style = MaterialTheme.typography.bodyMedium) }
 }
 
 @Composable

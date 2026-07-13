@@ -24,8 +24,8 @@ android {
         applicationId = "com.sikamikaniko.sonora"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.6.1"
+        versionCode = 16
+        versionName = "1.7.0"
 
         // Ads are ON only for the official signed build (CI has the keystore).
         // Anyone self-compiling gets no keystore -> no ads.

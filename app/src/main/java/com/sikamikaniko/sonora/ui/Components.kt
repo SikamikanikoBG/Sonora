@@ -41,9 +41,14 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Shuffle
@@ -157,7 +162,8 @@ private fun AlbumCover(
     selectionActive: Boolean,
     selected: Boolean,
     modifier: Modifier = Modifier,
-    corner: Dp = 16.dp
+    corner: Dp = 16.dp,
+    isLocal: Boolean = false
 ) {
     Box(
         modifier = modifier
@@ -177,6 +183,15 @@ private fun AlbumCover(
                 )
             )
         )
+        if (isLocal) {
+            Box(
+                Modifier.align(Alignment.BottomStart).padding(8.dp).size(22.dp)
+                    .clip(RoundedCornerShape(50)).background(Color(0x99000000)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Smartphone, "On device", tint = Color.White, modifier = Modifier.size(13.dp))
+            }
+        }
         if (selectionActive) SelectBadge(selected, Modifier.align(Alignment.TopEnd).padding(8.dp))
     }
 }
@@ -209,6 +224,7 @@ fun AlbumGridCard(
             coverId = album.coverArt,
             selectionActive = selectionActive,
             selected = selected,
+            isLocal = album.id.startsWith("localalbum-"),
             modifier = Modifier.fillMaxWidth().aspectRatio(1f).scale(scale)
         )
         Spacer(Modifier.size(10.dp))
@@ -333,6 +349,7 @@ data class SongRowActions(
     val onGoToAlbum: (() -> Unit)?,
     val onToggleStar: () -> Unit,
     val onAbout: (() -> Unit)? = null,
+    val onInfo: (() -> Unit)? = null,
     val onRemove: (() -> Unit)? = null,
     val removeLabel: String = "Remove"
 )
@@ -345,6 +362,7 @@ fun SongRow(
     starred: Boolean = false,
     selected: Boolean = false,
     selectionActive: Boolean = false,
+    isLocal: Boolean = false,
     actions: SongRowActions? = null,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
@@ -410,6 +428,10 @@ fun SongRow(
             )
         }
         if (!selectionActive) {
+            if (isLocal) {
+                Icon(Icons.Filled.Smartphone, "On device", tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f), modifier = Modifier.size(15.dp))
+                Spacer(Modifier.size(6.dp))
+            }
             if (starred) {
                 Icon(Icons.Filled.Favorite, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.size(4.dp))
@@ -458,6 +480,13 @@ private fun SongMenu(starred: Boolean, actions: SongRowActions) {
                     onClick = { open = false; about() }
                 )
             }
+            actions.onInfo?.let { info ->
+                DropdownMenuItem(
+                    text = { Text("Info") },
+                    leadingIcon = { Icon(Icons.Filled.Info, null) },
+                    onClick = { open = false; info() }
+                )
+            }
             actions.onGoToArtist?.let { go ->
                 DropdownMenuItem(
                     text = { Text("Go to artist") },
@@ -499,12 +528,18 @@ fun SongItem(
     val starredIds by vm.starredIds.collectAsState()
     val active = selMode == SelMode.SONGS
     val selected = selectedSongs.any { it.id == song.id }
+    val isLocal = song.localUri != null
+    var showInfo by remember { mutableStateOf(false) }
+
+    if (showInfo) SongInfoDialog(song, isLocal) { showInfo = false }
+
     SongRow(
         song = song,
         index = if (showIndex) index + 1 else null,
         starred = starredIds.contains(song.id),
         selected = selected,
         selectionActive = active,
+        isLocal = isLocal,
         actions = SongRowActions(
             onPlayNext = { vm.playNext(listOf(song)) },
             onAddToQueue = { vm.addToQueue(listOf(song)) },
@@ -513,12 +548,42 @@ fun SongItem(
             onGoToAlbum = song.albumId?.let { alid -> { nav.navigate("album/$alid") } },
             onToggleStar = { vm.toggleStar(song.id) },
             onAbout = { vm.openInsights(song.title, song.artist, song.album) },
+            onInfo = { showInfo = true },
             onRemove = onRemove,
             removeLabel = removeLabel
         ),
         onClick = { if (active) vm.toggleSongSelection(song) else vm.playSongs(songs, index) },
         onLongClick = { vm.toggleSongSelection(song) }
     )
+}
+
+@Composable
+private fun SongInfoDialog(song: Song, isLocal: Boolean, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(if (isLocal) Icons.Filled.Smartphone else Icons.Filled.Cloud, null) },
+        title = { Text(song.title ?: "Song") },
+        text = {
+            Column {
+                InfoLine("Artist", song.artist)
+                InfoLine("Album", song.album)
+                InfoLine("Location", if (isLocal) "On this device" else "Streaming from your server")
+                if (isLocal) InfoLine("File", song.localUri?.substringAfterLast('/'))
+                song.suffix?.let { InfoLine("Format", it.uppercase()) }
+                song.duration?.takeIf { it > 0 }?.let { InfoLine("Duration", formatSeconds(it)) }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+@Composable
+private fun InfoLine(label: String, value: String?) {
+    if (value.isNullOrBlank()) return
+    Row(Modifier.padding(vertical = 3.dp)) {
+        Text("$label: ", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
 }
 
 // ---------- selection action bar ----------

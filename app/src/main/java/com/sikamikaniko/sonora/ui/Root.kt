@@ -37,7 +37,6 @@ import androidx.navigation.compose.rememberNavController
 private sealed class Tab(val route: String, val label: String, val icon: ImageVector) {
     data object Home : Tab("home", "Home", Icons.Filled.Home)
     data object Library : Tab("library", "Library", Icons.Filled.LibraryMusic)
-    data object Search : Tab("search", "Search", Icons.Filled.Search)
     data object Playlists : Tab("playlists", "Playlists", Icons.AutoMirrored.Filled.QueueMusic)
     data object Radio : Tab("radio", "Radio", Icons.Filled.Radio)
 }
@@ -63,7 +62,7 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     var showQueue by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     val insightTarget by vm.insightTarget.collectAsState()
-    val tabs = listOf(Tab.Home, Tab.Library, Tab.Search, Tab.Playlists, Tab.Radio)
+    val tabs = listOf(Tab.Home, Tab.Library, Tab.Playlists, Tab.Radio)
     val selCount = if (selMode == SelMode.SONGS) selectedSongs.size else selectedAlbums.size
 
     LaunchedEffect(toast) {
@@ -100,7 +99,6 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
         NavHost(nav, startDestination = Tab.Home.route, modifier = Modifier.padding(padding)) {
             composable(Tab.Home.route) { HomeScreen(vm, nav) }
             composable(Tab.Library.route) { LibraryScreen(vm, nav) }
-            composable(Tab.Search.route) { SearchScreen(vm, nav) }
             composable(Tab.Playlists.route) { PlaylistsScreen(vm, nav) }
             composable("album/{id}") { entry ->
                 AlbumScreen(vm, entry.arguments?.getString("id") ?: "", nav, onBack = { nav.popBackStack() })
