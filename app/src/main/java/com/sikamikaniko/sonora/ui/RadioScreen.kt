@@ -57,8 +57,11 @@ import androidx.navigation.NavController
 import com.sikamikaniko.sonora.data.RadioBrowser
 
 private val RADIO_GENRES = listOf(
-    "Pop", "Rock", "Jazz", "Classical", "Electronic", "Hip-Hop", "Lofi",
-    "Chillout", "Ambient", "Dance", "Metal", "Reggae", "Blues", "Country", "Latin", "News"
+    "Pop", "Rock", "Jazz", "Classical", "Electronic", "House", "Deep House",
+    "Techno", "Trance", "Drum & Bass", "Hip-Hop", "R&B", "Funk", "Soul",
+    "Lofi", "Chillout", "Ambient", "Dance", "Disco", "Metal", "Punk", "Indie",
+    "Reggae", "Blues", "Country", "Folk", "Latin", "Salsa", "K-Pop", "Gospel",
+    "Soundtrack", "Oldies", "News", "Talk"
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -198,7 +201,7 @@ fun RadioScreen(vm: SonoraViewModel, nav: NavController) {
                     items(favs, key = { "fav_" + it.stationuuid }) { st ->
                         StationRow(
                             station = st,
-                            fav = vm.isFavStation(st.stationuuid),
+                            fav = true,
                             onPlay = { vm.playStation(st) },
                             onToggleFav = { vm.toggleFavStation(st) }
                         )
@@ -226,7 +229,7 @@ fun RadioScreen(vm: SonoraViewModel, nav: NavController) {
                     items(stations, key = { it.stationuuid }) { st ->
                         StationRow(
                             station = st,
-                            fav = vm.isFavStation(st.stationuuid),
+                            fav = favs.any { f -> f.stationuuid == st.stationuuid },
                             onPlay = { vm.playStation(st) },
                             onToggleFav = { vm.toggleFavStation(st) }
                         )
@@ -310,9 +313,18 @@ private fun StationRow(
 }
 
 private fun stationSubline(s: RadioBrowser.Station): String {
-    val parts = ArrayList<String>(3)
+    val parts = ArrayList<String>(4)
+    // Lead with popularity — stations are ordered most-voted first, so this explains the ranking.
+    s.votes?.takeIf { it > 0 }?.let { parts.add("★ ${compact(it)}") }
     s.country?.trim()?.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
     s.bitrate?.takeIf { it > 0 }?.let { parts.add("$it kbps") }
     s.codec?.trim()?.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
     return parts.joinToString("  ·  ")
+}
+
+/** 12345 -> "12.3k" so popularity reads cleanly in the tight subline. */
+private fun compact(n: Int): String = when {
+    n >= 1_000_000 -> "%.1fM".format(n / 1_000_000.0)
+    n >= 1_000 -> "%.1fk".format(n / 1_000.0)
+    else -> n.toString()
 }

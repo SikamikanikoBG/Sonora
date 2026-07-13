@@ -15,21 +15,26 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -48,6 +53,20 @@ import kotlin.math.roundToInt
 fun QueueScreen(vm: SonoraViewModel, onBack: () -> Unit) {
     val queue by vm.queue.collectAsState()
     val rowPx = with(LocalDensity.current) { 64.dp.toPx() }
+    var saving by remember { mutableStateOf(false) }
+
+    if (saving) {
+        var name by remember { mutableStateOf("My mix") }
+        AlertDialog(
+            onDismissRequest = { saving = false },
+            title = { Text("Save queue as playlist") },
+            text = {
+                OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Playlist name") })
+            },
+            confirmButton = { TextButton(onClick = { vm.saveQueueAsPlaylist(name); saving = false }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { saving = false }) { Text("Cancel") } }
+        )
+    }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
@@ -55,6 +74,13 @@ fun QueueScreen(vm: SonoraViewModel, onBack: () -> Unit) {
                 title = { Text("Up next") },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.Filled.KeyboardArrowDown, "Close") }
+                },
+                actions = {
+                    if (queue.isNotEmpty()) {
+                        IconButton(onClick = { saving = true }) {
+                            Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Save as playlist")
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,

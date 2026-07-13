@@ -1,16 +1,24 @@
 package com.sikamikaniko.sonora.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Radio
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -25,8 +33,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -39,6 +51,7 @@ private sealed class Tab(val route: String, val label: String, val icon: ImageVe
     data object Library : Tab("library", "Library", Icons.Filled.LibraryMusic)
     data object Playlists : Tab("playlists", "Playlists", Icons.AutoMirrored.Filled.QueueMusic)
     data object Radio : Tab("radio", "Radio", Icons.Filled.Radio)
+    data object Settings : Tab("settings", "Settings", Icons.Filled.Settings)
 }
 
 @Composable
@@ -57,16 +70,21 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
     val selectedSongs by vm.selectedSongs.collectAsState()
     val selectedAlbums by vm.selectedAlbums.collectAsState()
     val toast by vm.toast.collectAsState()
+    val error by vm.error.collectAsState()
+    val online by vm.online.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     var showPlayer by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     val insightTarget by vm.insightTarget.collectAsState()
-    val tabs = listOf(Tab.Home, Tab.Library, Tab.Playlists, Tab.Radio)
+    val tabs = listOf(Tab.Home, Tab.Library, Tab.Playlists, Tab.Radio, Tab.Settings)
     val selCount = if (selMode == SelMode.SONGS) selectedSongs.size else selectedAlbums.size
 
     LaunchedEffect(toast) {
         toast?.let { snackbar.showSnackbar(it); vm.consumeToast() }
+    }
+    LaunchedEffect(error) {
+        error?.let { snackbar.showSnackbar(it); vm.consumeError() }
     }
 
     Scaffold(
@@ -96,7 +114,9 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             }
         }
     ) { padding ->
-        NavHost(nav, startDestination = Tab.Home.route, modifier = Modifier.padding(padding)) {
+        Column(Modifier.padding(padding)) {
+            if (!online) OfflineBanner()
+            NavHost(nav, startDestination = Tab.Home.route, modifier = Modifier.weight(1f)) {
             composable(Tab.Home.route) { HomeScreen(vm, nav) }
             composable(Tab.Library.route) { LibraryScreen(vm, nav) }
             composable(Tab.Playlists.route) { PlaylistsScreen(vm, nav) }
@@ -118,6 +138,7 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             composable("similar") { SimilarSongsScreen(vm, nav) }
             composable("yt/{q}") { entry ->
                 YouTubeScreen(entry.arguments?.getString("q") ?: "", nav)
+            }
             }
         }
     }
@@ -151,6 +172,31 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             showPlayer -> showPlayer = false
             selMode != SelMode.NONE -> vm.clearSelection()
         }
+    }
+}
+
+@Composable
+private fun OfflineBanner() {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.errorContainer)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            Icons.Filled.CloudOff, null,
+            tint = MaterialTheme.colorScheme.onErrorContainer,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(
+            "You're offline — some things won't load",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onErrorContainer
+        )
     }
 }
 

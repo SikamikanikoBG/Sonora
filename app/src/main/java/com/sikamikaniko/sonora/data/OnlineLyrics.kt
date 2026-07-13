@@ -17,8 +17,8 @@ import java.util.concurrent.TimeUnit
 object OnlineLyrics {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
         .build()
     private val gson = Gson()
     private const val UA = "Sonora/1.6 (https://github.com/SikamikanikoBG/Sonora)"

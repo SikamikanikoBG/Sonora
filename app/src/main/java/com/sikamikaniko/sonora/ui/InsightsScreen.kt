@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -65,6 +66,13 @@ fun InsightsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
                 title = { Text("About $heading", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.Filled.KeyboardArrowDown, "Close") }
+                },
+                actions = {
+                    if (text.isNotBlank() && !streaming) {
+                        IconButton(onClick = { vm.refreshInsight() }) {
+                            Icon(Icons.Filled.Refresh, "Regenerate")
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,

@@ -28,14 +28,25 @@ object RadioBrowser {
         val country: String? = null,
         val countrycode: String? = null,
         val codec: String? = null,
-        val bitrate: Int? = null
+        val bitrate: Int? = null,
+        // Popularity signals from Radio Browser: community up-votes and total tune-ins.
+        val votes: Int? = null,
+        val clickcount: Int? = null
     )
 
-    suspend fun top(limit: Int = 60): List<Station> =
+    suspend fun top(limit: Int = 100): List<Station> =
         get("/json/stations/topvote/$limit")
 
-    suspend fun byTag(tag: String, limit: Int = 80): List<Station> =
-        get("/json/stations/bytagexact/${enc(tag)}?order=votes&reverse=true&hidebroken=true&limit=$limit")
+    /**
+     * Stations for a genre, most-popular first. Tries the exact tag, then falls back
+     * to a fuzzy tag search so multi-word genres (e.g. "deep house") still return results.
+     */
+    suspend fun byTag(tag: String, limit: Int = 100): List<Station> {
+        val exact = get("/json/stations/bytagexact/${enc(tag)}?order=votes&reverse=true&hidebroken=true&limit=$limit")
+        if (exact.size >= 5) return exact
+        val fuzzy = get("/json/stations/bytag/${enc(tag)}?order=votes&reverse=true&hidebroken=true&limit=$limit")
+        return (exact + fuzzy).distinctBy { it.stationuuid }
+    }
 
     suspend fun byCountry(code: String, limit: Int = 80): List<Station> =
         get("/json/stations/bycountrycodeexact/${enc(code)}?order=votes&reverse=true&hidebroken=true&limit=$limit")

@@ -33,8 +33,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Favorite
@@ -242,7 +244,10 @@ fun NowPlayingScreen(
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
       Box(Modifier.fillMaxSize()) {
         Backdrop(artwork)
-        Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.Filled.KeyboardArrowDown, "Collapse") }
                 Spacer(Modifier.weight(1f))
@@ -271,9 +276,9 @@ fun NowPlayingScreen(
                 )
             }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(18.dp))
             Box(
-                Modifier.fillMaxWidth().aspectRatio(1f).padding(horizontal = 6.dp)
+                Modifier.fillMaxWidth(0.82f).aspectRatio(1f)
                     .pointerInput(albumId) {
                         var dx = 0f; var dy = 0f
                         detectDragGestures(
@@ -300,7 +305,7 @@ fun NowPlayingScreen(
                 }
             }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(20.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -337,6 +342,18 @@ fun NowPlayingScreen(
                             modifier = Modifier.scale(heartScale)
                         )
                     }
+                }
+            }
+
+            if (!isLive) {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    NpQuickChip(Icons.Filled.Lyrics, "Lyrics", onOpenLyrics)
+                    NpQuickChip(Icons.Filled.AutoAwesome, "About", onOpenInsights)
                 }
             }
 
@@ -438,7 +455,7 @@ fun NowPlayingScreen(
                 }
             }
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(24.dp))
             Surface(
                 shape = RoundedCornerShape(50),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
@@ -504,6 +521,22 @@ private fun Backdrop(artwork: String?) {
                 )
             )
         )
+    }
+}
+
+@Composable
+private fun NpQuickChip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 

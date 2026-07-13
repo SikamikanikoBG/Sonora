@@ -17,9 +17,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -27,8 +30,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -70,6 +75,7 @@ fun AskScreen(vm: SonoraViewModel, nav: NavController) {
     val status by vm.aiStatus.collectAsState()
     val radio by vm.radio.collectAsState()
     val lastPrompt by vm.lastDjPrompt.collectAsState()
+    val mixSongs by vm.mixSongs.collectAsState()
     val ready = enabled && baseUrl.isNotBlank() && model.isNotBlank()
     val brand = LocalBrandBrush.current
     var prompt by remember { mutableStateOf("") }
@@ -132,7 +138,7 @@ fun AskScreen(vm: SonoraViewModel, nav: NavController) {
             return
         }
 
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
             OutlinedTextField(
                 value = prompt,
                 onValueChange = { prompt = it },
@@ -162,19 +168,61 @@ fun AskScreen(vm: SonoraViewModel, nav: NavController) {
                 Spacer(Modifier.height(6.dp))
             }
             if (lastPrompt != null && !busy) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(brand)
-                        .clickable { vm.saveCurrentAsMix() }
-                        .padding(horizontal = 16.dp, vertical = 9.dp)
-                ) {
-                    Icon(Icons.Filled.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.size(6.dp))
-                    Text("Save as a mix on Home", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(brand)
+                            .clickable { vm.saveCurrentAsMix() }
+                            .padding(horizontal = 16.dp, vertical = 9.dp)
+                    ) {
+                        Icon(Icons.Filled.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(6.dp))
+                        Text("Save as mix", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { vm.saveQueueAsPlaylist(lastPrompt ?: "My mix") }
+                            .padding(horizontal = 16.dp, vertical = 9.dp)
+                    ) {
+                        Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(6.dp))
+                        Text("Freeze as playlist", fontWeight = FontWeight.SemiBold)
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
+            }
+
+            // Preview of the tracks the AI just gathered — tap any to jump in.
+            if (mixSongs.isNotEmpty()) {
+                Text(
+                    "In this mix · ${mixSongs.size} tracks",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+                mixSongs.forEachIndexed { i, s ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { vm.playSongs(mixSongs, i) }
+                            .padding(vertical = 6.dp, horizontal = 4.dp)
+                    ) {
+                        CoverArt(s.coverArt, Modifier.size(40.dp), corner = 8.dp)
+                        Spacer(Modifier.size(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(s.title ?: "Unknown", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(s.artist ?: "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Icon(Icons.Filled.PlayArrow, "Play", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
             }
 
             Spacer(Modifier.height(10.dp))

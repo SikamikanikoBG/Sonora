@@ -29,6 +29,7 @@ import com.sikamikaniko.sonora.data.Artist
 import com.sikamikaniko.sonora.data.ArtistWithAlbums
 import com.sikamikaniko.sonora.data.Genre
 import com.sikamikaniko.sonora.data.LocalMedia
+import com.sikamikaniko.sonora.data.NetworkMonitor
 import com.sikamikaniko.sonora.data.OnlineLyrics
 import com.sikamikaniko.sonora.data.Playlist
 import com.sikamikaniko.sonora.data.PlaylistWithSongs
@@ -49,6 +50,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -76,9 +78,15 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+    fun consumeError() { _error.value = null }
 
     private val _toast = MutableStateFlow<String?>(null)
     val toast: StateFlow<String?> = _toast.asStateFlow()
+
+    // ---- Connectivity ----
+    private val _online = MutableStateFlow(true)
+    /** False while the device has no validated internet — the UI shows an offline banner. */
+    val online: StateFlow<Boolean> = _online.asStateFlow()
 
     // ---- Library ----
     private val _albums = MutableStateFlow<List<Album>>(emptyList())
@@ -164,26 +172,30 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadTopStations() = viewModelScope.launch {
+        if (_radioLoading.value) return@launch
         _radioLoading.value = true; _radioGenre.value = null
-        _stations.value = RadioBrowser.top(60)
+        _stations.value = RadioBrowser.top(100)
         _radioLoading.value = false
     }
     fun loadGenre(tag: String) = viewModelScope.launch {
+        if (_radioLoading.value) return@launch
         _radioLoading.value = true; _radioGenre.value = tag
         _stations.value = RadioBrowser.byTag(tag)
+        if (_stations.value.isEmpty()) _error.value = "No stations found for that genre right now."
         _radioLoading.value = false
     }
     fun searchStations(q: String) = viewModelScope.launch {
-        if (q.isBlank()) return@launch
+        if (q.isBlank() || _radioLoading.value) return@launch
         _radioLoading.value = true; _radioGenre.value = null
         _stations.value = RadioBrowser.search(q)
         _radioLoading.value = false
     }
     fun surpriseStation() = viewModelScope.launch {
+        if (_radioLoading.value) return@launch
         _radioLoading.value = true
         val s = RadioBrowser.random(_radioGenre.value)
         _radioLoading.value = false
-        if (s != null) playStation(s)
+        if (s != null) playStation(s) else _error.value = "Couldn't reach radio — check your connection."
     }
     fun playStation(s: RadioBrowser.Station) {
         val c = controller ?: return
@@ -404,10 +416,17 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
 
 
+    /** Tracks the AI DJ just built, so the Ask screen can preview them instead of only auto-playing. */
+    private val _mixSongs = MutableStateFlow<List<Song>>(emptyList())
+    val mixSongs: StateFlow<List<Song>> = _mixSongs.asStateFlow()
+
     /** AI DJ: turn a natural-language request into a playing queue. */
     fun aiDj(prompt: String) = viewModelScope.launch {
         if (!aiReady) { _aiStatus.value = "Set up AI in Settings first"; return@launch }
         if (prompt.isBlank()) return@launch
+        // Re-entry guard: ignore repeat taps while a mix is already generating, so
+        // a slow network can't stack three mixes that all start playing in turn.
+        if (_aiBusy.value) return@launch
         _aiBusy.value = true
         _aiStatus.value = "Thinking…"
         try {
@@ -416,6 +435,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             _aiStatus.value = "Gathering tracks…"
             val songs = gatherSongs(albums).shuffled()
             if (songs.isEmpty()) { _aiStatus.value = "No playable tracks found"; return@launch }
+            _mixSongs.value = songs
             _aiStatus.value = "Playing ${songs.size} tracks · ${albums.size} albums"
             _lastDjPrompt.value = prompt
             playSongs(songs, 0)
@@ -458,15 +478,28 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // Per-song/topic cache of AI insights so re-opening the same analysis is instant.
+    private val insightCache = HashMap<String, String>()
+    private val _lastInsightTopic = MutableStateFlow("song")
+    val lastInsightTopic: StateFlow<String> = _lastInsightTopic.asStateFlow()
+    /** Re-run the last insight, bypassing the cache. */
+    fun refreshInsight() = aiInsights(_lastInsightTopic.value, force = true)
+
     /** AI insights about the current music. topic = song | album | artist | era | songwriter. */
-    fun aiInsights(topic: String = "song") = viewModelScope.launch {
+    fun aiInsights(topic: String = "song", force: Boolean = false) = viewModelScope.launch {
         if (!aiReady) { _aiText.value = "Set up AI in Settings first."; return@launch }
-        _aiText.value = ""
-        _aiStreaming.value = true
+        if (_aiStreaming.value) return@launch
+        _lastInsightTopic.value = topic
         val tgt = _insightTarget.value
         val t = tgt?.title ?: _title.value ?: ""
         val ar = tgt?.artist ?: _artist.value ?: ""
         val al = tgt?.album ?: _albumTitle.value ?: ""
+        val cacheKey = "$topic|$t|$ar|$al".lowercase()
+        if (!force) {
+            insightCache[cacheKey]?.let { _aiText.value = it; _aiStreaming.value = false; return@launch }
+        }
+        _aiText.value = ""
+        _aiStreaming.value = true
         // Retrieval-augmented grounding: pull real facts from Wikipedia first.
         val wikiQuery = when (topic) {
             "album" -> "$al album $ar"
@@ -494,6 +527,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             _aiText.value += tok
         }
         _aiStreaming.value = false
+        if (_aiText.value.isNotBlank()) insightCache[cacheKey] = _aiText.value
     }
 
     // ---- AI similar-songs discovery (AI-based, not hardcoded) ----
@@ -522,6 +556,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val ar = (artist ?: _artist.value ?: "").trim()
         _similarSeed.value = if (t.isNotBlank()) "$t · $ar" else null
         if (!aiReady || t.isBlank()) { _similar.value = emptyList(); return@launch }
+        if (_similarLoading.value) return@launch
         _similarLoading.value = true
         _similar.value = emptyList()
         try {
@@ -775,6 +810,9 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     private val _updateBusy = MutableStateFlow(false)
     val updateBusy: StateFlow<Boolean> = _updateBusy.asStateFlow()
 
+    // Guards an automatic retry when a stream drops on a flaky network.
+    private var errorRetries = 0
+
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) { _isPlaying.value = isPlaying; savePlaybackSnapshot() }
         override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) { updateNowPlaying() }
@@ -784,10 +822,26 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
                 pauseAfterTrack = false
                 _sleepEndOfTrack.value = false
             }
+            errorRetries = 0
             updateNowPlaying()
             rebuildQueue()
+            prefetchLyrics()
             mediaItem?.mediaId?.let { scrobble(it) }
             if (_radio.value) maybeExtendRadio()
+        }
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // A dropped connection mid-track shouldn't look like the song "just stopped".
+            // Transparently re-prepare and resume from where we were, a few times.
+            val c = controller ?: return
+            if (errorRetries < 3) {
+                errorRetries++
+                val pos = c.currentPosition
+                c.prepare()
+                if (c.currentMediaItem?.mediaId?.startsWith("radio:") != true) c.seekTo(pos)
+                c.play()
+            } else {
+                _error.value = "Playback stopped — connection issue. Tap play to retry."
+            }
         }
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
             rebuildQueue()
@@ -808,6 +862,14 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (_loggedIn.value) refreshAll()
         maybeScanDevice()
         checkForUpdate()
+        viewModelScope.launch {
+            NetworkMonitor.online(getApplication<Application>()).collect { up ->
+                val wasOffline = !_online.value
+                _online.value = up
+                // Coming back online — quietly recover content that failed while down.
+                if (up && wasOffline && _loggedIn.value) refreshAll()
+            }
+        }
     }
 
     private fun maybeScanDevice() {
@@ -1387,21 +1449,55 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (to != from) { c.moveMediaItem(from, to); rebuildQueue() }
     }
 
-    // ---- Lyrics ----
-    fun loadLyrics() = viewModelScope.launch {
-        _lyricsLoading.value = true
-        _syncedLyrics.value = null
-        // 1) try the music server
+    // ---- Lyrics (cached per track + prefetched on track change so opening them is instant) ----
+    private data class CachedLyrics(val plain: String?, val synced: List<Pair<Long, String>>?)
+    private val lyricsCache = HashMap<String, CachedLyrics>()
+
+    private fun lyricsKey(): String? {
+        val t = _title.value ?: return null
+        return "${_artist.value ?: ""}|$t".lowercase()
+    }
+
+    /** Fetch lyrics for the current track (server first, then lrclib) — returns null if none. */
+    private suspend fun fetchLyrics(): CachedLyrics {
         var text = try {
             Subsonic.api?.getLyrics(_artist.value, _title.value)?.response?.lyrics?.value
         } catch (_: Exception) { null }
-        // 2) fall back to lrclib.net (plain + time-synced)
+        var synced: List<Pair<Long, String>>? = null
         if (text.isNullOrBlank()) {
             val lrc = OnlineLyrics.best(_artist.value, _title.value, _albumTitle.value, (_duration.value / 1000).toInt())
             text = OnlineLyrics.plainFrom(lrc)
-            _syncedLyrics.value = OnlineLyrics.parseSynced(lrc?.syncedLyrics).takeIf { it.isNotEmpty() }
+            synced = OnlineLyrics.parseSynced(lrc?.syncedLyrics).takeIf { it.isNotEmpty() }
         }
-        _lyrics.value = text
+        return CachedLyrics(text, synced)
+    }
+
+    /** Warm the cache in the background the moment a track starts, so the screen is instant. */
+    private fun prefetchLyrics() {
+        val key = lyricsKey() ?: return
+        if (lyricsCache.containsKey(key)) return
+        viewModelScope.launch {
+            if (lyricsCache.containsKey(key)) return@launch
+            lyricsCache[key] = fetchLyrics()
+        }
+    }
+
+    fun loadLyrics() = viewModelScope.launch {
+        val key = lyricsKey()
+        // Cache hit — show immediately, no spinner, no wait.
+        val cached = key?.let { lyricsCache[it] }
+        if (cached != null) {
+            _lyrics.value = cached.plain
+            _syncedLyrics.value = cached.synced
+            _lyricsLoading.value = false
+            return@launch
+        }
+        _lyricsLoading.value = true
+        _syncedLyrics.value = null
+        val result = fetchLyrics()
+        if (key != null) lyricsCache[key] = result
+        _lyrics.value = result.plain
+        _syncedLyrics.value = result.synced
         _lyricsLoading.value = false
     }
 
@@ -1431,6 +1527,24 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             Subsonic.api?.updatePlaylist(playlistId, null, listOf(index))
             _currentPlaylist.value = Subsonic.api?.getPlaylist(playlistId)?.response?.playlist
         } catch (_: Exception) { _error.value = "Could not remove song" }
+    }
+
+    /**
+     * Freeze whatever is currently playing (e.g. an ever-changing AI mix) into a
+     * permanent, unchanging playlist on the server. Local/radio items are skipped
+     * since the server can't hold them.
+     */
+    fun saveQueueAsPlaylist(name: String) = viewModelScope.launch {
+        val c = controller ?: return@launch
+        val ids = (0 until c.mediaItemCount)
+            .map { c.getMediaItemAt(it).mediaId }
+            .filter { it.isNotBlank() && !it.startsWith("local:") && !it.startsWith("radio:") }
+        if (ids.isEmpty()) { _error.value = "Nothing to save — play a mix first."; return@launch }
+        try {
+            Subsonic.api?.createPlaylist(name.trim().ifBlank { "My mix" }, ids)
+            loadPlaylists()
+            _toast.value = "Saved ${ids.size} tracks to \"${name.trim().ifBlank { "My mix" }}\""
+        } catch (_: Exception) { _error.value = "Could not save playlist" }
     }
 
     private fun scrobble(id: String) {

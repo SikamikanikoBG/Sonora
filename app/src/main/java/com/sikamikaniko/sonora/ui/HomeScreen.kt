@@ -76,6 +76,7 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
     val random by vm.randomAlbums.collectAsState()
     val mixes by vm.mixes.collectAsState()
     val recentStations by vm.recentStations.collectAsState()
+    val favStations by vm.favStations.collectAsState()
     val aiEnabled by vm.aiEnabled.collectAsState()
     val aiBaseUrl by vm.aiBaseUrl.collectAsState()
     val aiModel by vm.aiModel.collectAsState()
@@ -100,10 +101,21 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
             HomeHeader(
                 brand = brand,
                 onAsk = { nav.navigate("ai") },
-                onShuffle = { vm.shuffleLibrary() },
-                onRefresh = { vm.refreshAll() },
-                onSettings = { nav.navigate("settings") }
+                onShuffle = { vm.shuffleLibrary() }
             )
+        }
+        if (favStations.isNotEmpty()) {
+            item {
+                SectionHeader("Favourite stations")
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(favStations, key = { "favhome_" + it.stationuuid }) { st ->
+                        RadioMiniCard(st) { vm.playStation(st) }
+                    }
+                }
+            }
         }
         if (mixes.isNotEmpty() || aiReady) {
             item {
@@ -119,7 +131,8 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
                             onPlay = { vm.playMix(mix) },
                             onRename = { renaming = mix },
                             onDelete = { vm.deleteMix(mix.id) },
-                            onShare = { ShareUtil.shareMix(context, mix.name, mix.criteria) }
+                            onShare = { ShareUtil.shareMix(context, mix.name, mix.criteria) },
+                            onFreeze = { vm.saveQueueAsPlaylist(mix.name) }
                         )
                     }
                     item { NewMixCard { nav.navigate("ai") } }
@@ -152,9 +165,7 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
 private fun HomeHeader(
     brand: androidx.compose.ui.graphics.Brush,
     onAsk: () -> Unit,
-    onShuffle: () -> Unit,
-    onRefresh: () -> Unit,
-    onSettings: () -> Unit
+    onShuffle: () -> Unit
 ) {
     val hour = remember { LocalTime.now().hour }
     val greeting = when {
@@ -163,35 +174,39 @@ private fun HomeHeader(
         else -> "Good evening"
     }
     val onBrand = Color.White
+    // Compact hero: greeting + wordmark on the left, a single Ask affordance, and an
+    // inline Shuffle chip — no oversized banner, no mystery buttons.
     Box(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
+            .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp))
             .background(brand)
             .statusBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 18.dp)
+            .padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 14.dp)
     ) {
-        Column(Modifier.fillMaxWidth()) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(greeting, style = MaterialTheme.typography.labelLarge, color = onBrand.copy(alpha = 0.85f), modifier = Modifier.weight(1f))
-                IconButton(onClick = onAsk) { Icon(Icons.Filled.AutoAwesome, "Ask Sonora", tint = onBrand) }
-                IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, "Refresh", tint = onBrand) }
-                IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Settings", tint = onBrand) }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text(greeting, style = MaterialTheme.typography.labelMedium, color = onBrand.copy(alpha = 0.85f))
+                Text(
+                    "Sonora",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = onBrand
+                )
             }
-            Text("Sonora", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = onBrand)
-            Spacer(Modifier.height(16.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
                     .background(Color.White.copy(alpha = 0.20f))
                     .clickable(onClick = onShuffle)
-                    .padding(horizontal = 18.dp, vertical = 10.dp)
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
-                Icon(Icons.Filled.Shuffle, null, tint = onBrand, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.size(8.dp))
-                Text("Shuffle everything", color = onBrand, fontWeight = FontWeight.SemiBold)
+                Icon(Icons.Filled.Shuffle, null, tint = onBrand, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("Shuffle", color = onBrand, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
             }
+            IconButton(onClick = onAsk) { Icon(Icons.Filled.AutoAwesome, "Ask Sonora", tint = onBrand) }
         }
     }
 }
@@ -220,7 +235,8 @@ private fun MixCard(
     onPlay: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onFreeze: () -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
     Box {
@@ -251,6 +267,11 @@ private fun MixCard(
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Play") }, onClick = { menu = false; onPlay() })
+            DropdownMenuItem(
+                text = { Text("Save as playlist") },
+                leadingIcon = { Icon(Icons.Filled.Add, null) },
+                onClick = { menu = false; onFreeze() }
+            )
             DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Filled.Share, null) }, onClick = { menu = false; onShare() })
             DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; onRename() })
             DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
