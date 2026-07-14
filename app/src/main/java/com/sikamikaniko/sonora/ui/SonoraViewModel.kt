@@ -213,13 +213,22 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             .setMediaMetadata(meta)
             .build()
         c.setMediaItems(listOf(item)); c.prepare(); c.play()
+        _currentStation.value = s
         addRecentStation(s)
     }
+
+    // The station currently on air, so the player can favourite IT (not a bogus song star).
+    private val _currentStation = MutableStateFlow<RadioBrowser.Station?>(null)
+    val currentStation: StateFlow<RadioBrowser.Station?> = _currentStation.asStateFlow()
+    fun favCurrentStation() { _currentStation.value?.let { toggleFavStation(it) } }
+
     fun isFavStation(uuid: String) = _favStations.value.any { it.stationuuid == uuid }
     fun toggleFavStation(s: RadioBrowser.Station) {
-        _favStations.value = if (isFavStation(s.stationuuid)) _favStations.value.filter { it.stationuuid != s.stationuuid }
+        val wasFav = isFavStation(s.stationuuid)
+        _favStations.value = if (wasFav) _favStations.value.filter { it.stationuuid != s.stationuuid }
         else _favStations.value + s
         persistFavStations()
+        _toast.value = if (wasFav) "Removed from favourites" else "Saved to favourites — find it in the Saved tab"
     }
 
     // ---- Insights target (educator works anywhere, not just now-playing) ----
@@ -1530,6 +1539,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun playSongs(songs: List<Song>, startIndex: Int) {
         val c = controller ?: return
         if (songs.isEmpty()) return
+        _currentStation.value = null
         val items = songs.map { toMediaItem(it) }
         c.shuffleModeEnabled = false
         c.setMediaItems(items, startIndex.coerceIn(0, items.lastIndex), 0L)
@@ -1539,6 +1549,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun shufflePlay(songs: List<Song>) {
         if (songs.isEmpty()) return
         val c = controller ?: return
+        _currentStation.value = null
         val items = songs.map { toMediaItem(it) }
         c.setMediaItems(items, 0, 0L)
         c.shuffleModeEnabled = true
@@ -1732,7 +1743,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         try {
             Subsonic.api?.createPlaylist(name.trim().ifBlank { "My mix" }, ids)
             loadPlaylists()
-            _toast.value = "Saved ${ids.size} tracks to \"${name.trim().ifBlank { "My mix" }}\""
+            _toast.value = "Saved \"${name.trim().ifBlank { "My mix" }}\" (${ids.size} tracks) — find it in the Saved tab"
         } catch (_: Exception) { _error.value = "Could not save playlist" }
     }
 

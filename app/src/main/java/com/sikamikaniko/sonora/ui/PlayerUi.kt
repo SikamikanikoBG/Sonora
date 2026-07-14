@@ -227,6 +227,9 @@ fun NowPlayingScreen(
     val artistId by vm.currentArtistId.collectAsState()
     val isLive by vm.isLive.collectAsState()
     val autoLyrics by vm.autoLyrics.collectAsState()
+    val currentStation by vm.currentStation.collectAsState()
+    val favStations by vm.favStations.collectAsState()
+    val stationFav = currentStation != null && favStations.any { it.stationuuid == currentStation?.stationuuid }
 
     // Inline karaoke: show synced lyrics in place of the cover, right here — no screen deeper.
     var showLyricsInline by remember { mutableStateOf(autoLyrics) }
@@ -369,7 +372,27 @@ fun NowPlayingScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                mediaId?.let { id ->
+                // Live radio → favourite the STATION; a normal track → star the song.
+                if (isLive) {
+                    if (currentStation != null) {
+                        val heartScale by animateFloatAsState(
+                            if (stationFav) 1.18f else 1f,
+                            spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                            label = "stationHeart"
+                        )
+                        IconButton(onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            vm.favCurrentStation()
+                        }) {
+                            Icon(
+                                if (stationFav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                                "Favourite station",
+                                tint = if (stationFav) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.scale(heartScale)
+                            )
+                        }
+                    }
+                } else mediaId?.let { id ->
                     val heartScale by animateFloatAsState(
                         if (isStarred) 1.18f else 1f,
                         spring(dampingRatio = Spring.DampingRatioMediumBouncy),

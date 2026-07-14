@@ -17,8 +17,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -49,26 +51,69 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.sikamikaniko.sonora.data.Playlist
+import com.sikamikaniko.sonora.data.RadioBrowser
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistsScreen(vm: SonoraViewModel, nav: NavController) {
+    // Always refresh the playlist list on entry so a just-saved playlist shows up.
+    LaunchedEffect(Unit) { vm.loadPlaylists() }
     val playlists by vm.playlists.collectAsState()
+    val favStations by vm.favStations.collectAsState()
+
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("Playlists") },
+            title = { Text("Saved") },
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
                 titleContentColor = MaterialTheme.colorScheme.onBackground
             )
         )
-        if (playlists.isEmpty()) { CenterMessage("No playlists yet. Create playlists on your server and they'll appear here."); return@Column }
+
+        if (playlists.isEmpty() && favStations.isEmpty()) {
+            CenterMessage(
+                "Nothing saved yet.\n\nFreeze an AI mix or your queue into a playlist, and tap the ♥ on any radio station — they'll all live here."
+            )
+            return@Column
+        }
+
         LazyColumn(Modifier.fillMaxSize()) {
-            items(playlists, key = { it.id }) { pl ->
-                PlaylistRow(pl) { nav.navigate("playlist/${pl.id}") }
+            // ---- Playlists ----
+            item { SectionHeader("Playlists") }
+            if (playlists.isEmpty()) {
+                item { HintRow("No playlists yet — freeze an AI mix or your queue to save one.") }
+            } else {
+                items(playlists, key = { "pl_" + it.id }) { pl ->
+                    PlaylistRow(pl) { nav.navigate("playlist/${pl.id}") }
+                }
             }
+
+            // ---- Favourite radios ----
+            item { SectionHeader("Favourite radios") }
+            if (favStations.isEmpty()) {
+                item { HintRow("No favourite stations yet — tap the ♥ on a station in the Radio tab.") }
+            } else {
+                items(favStations, key = { "fav_" + it.stationuuid }) { st ->
+                    FavRadioRow(
+                        station = st,
+                        onPlay = { vm.playStation(st) },
+                        onUnfav = { vm.toggleFavStation(st) }
+                    )
+                }
+            }
+            item { Spacer(Modifier.height(90.dp)) }
         }
     }
+}
+
+@Composable
+private fun HintRow(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp)
+    )
 }
 
 @Composable
@@ -85,6 +130,30 @@ private fun PlaylistRow(pl: Playlist, onClick: () -> Unit) {
             val n = pl.songCount ?: 0
             Text("$n song${if (n == 1) "" else "s"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+@Composable
+private fun FavRadioRow(station: RadioBrowser.Station, onPlay: () -> Unit, onUnfav: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onPlay).padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        if (!station.favicon.isNullOrBlank()) UrlArt(station.favicon, Modifier.size(48.dp), corner = 10.dp)
+        else Icon(Icons.Filled.Radio, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(28.dp))
+        Spacer(Modifier.size(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(station.name?.trim().takeUnless { it.isNullOrBlank() } ?: "Station", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val sub = listOfNotNull(
+                station.country?.trim()?.takeIf { it.isNotEmpty() },
+                station.codec?.trim()?.takeIf { it.isNotEmpty() }
+            ).joinToString("  ·  ")
+            if (sub.isNotBlank()) {
+                Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        IconButton(onClick = onPlay) { Icon(Icons.Filled.PlayArrow, "Play", tint = MaterialTheme.colorScheme.primary) }
+        IconButton(onClick = onUnfav) { Icon(Icons.Filled.Favorite, "Remove favourite", tint = MaterialTheme.colorScheme.primary) }
     }
 }
 

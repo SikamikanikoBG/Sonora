@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
@@ -49,7 +49,7 @@ import androidx.navigation.compose.rememberNavController
 private sealed class Tab(val route: String, val label: String, val icon: ImageVector) {
     data object Home : Tab("home", "Home", Icons.Filled.Home)
     data object Library : Tab("library", "Library", Icons.Filled.LibraryMusic)
-    data object Playlists : Tab("playlists", "Playlists", Icons.AutoMirrored.Filled.QueueMusic)
+    data object Playlists : Tab("playlists", "Saved", Icons.Filled.Bookmark)
     data object Radio : Tab("radio", "Radio", Icons.Filled.Radio)
     data object Settings : Tab("settings", "Settings", Icons.Filled.Settings)
 }
