@@ -308,6 +308,9 @@ fun NowPlayingScreen(
                 Modifier.weight(1f).fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
+                // Largest square that fits the flexible area (captured here; the constraint
+                // scope isn't reachable from the nested boxes below).
+                val coverSide = minOf(maxWidth, maxHeight)
                 // One unified swipe layer over the whole media area (cover OR lyrics):
                 //   left/right = next/prev
                 //   swipe UP   = go a level deeper: cover → lyrics → album
@@ -341,9 +344,8 @@ fun NowPlayingScreen(
                             modifier = Modifier.fillMaxSize()
                         )
                     } else {
-                        val side = minOf(maxWidth, maxHeight)
                         Box(
-                            Modifier.size(side)
+                            Modifier.size(coverSide)
                                 // Tap the cover to flip to karaoke lyrics (no screen deeper).
                                 .pointerInput(isLive) {
                                     detectTapGestures(onTap = { if (!isLive) showLyricsInline = true })
