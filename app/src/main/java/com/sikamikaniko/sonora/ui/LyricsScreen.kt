@@ -100,7 +100,7 @@ fun LyricsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun SyncedLyrics(vm: SonoraViewModel, lines: List<Pair<Long, String>>) {
+fun SyncedLyrics(vm: SonoraViewModel, lines: List<Pair<Long, String>>) {
     val position by vm.position.collectAsState()
     val current = remember(position, lines) {
         lines.indexOfLast { it.first <= position }.coerceIn(0, lines.lastIndex)

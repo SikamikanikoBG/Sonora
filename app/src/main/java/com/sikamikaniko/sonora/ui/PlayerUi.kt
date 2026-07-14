@@ -18,6 +18,9 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -58,6 +61,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -68,6 +72,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -142,6 +147,14 @@ fun MiniPlayer(vm: SonoraViewModel, onExpand: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
                     .clickable(interactionSource = interaction, indication = LocalIndication.current, onClick = onExpand)
+                    // Swipe up on the bar to open the full player (like the big apps).
+                    .pointerInput(Unit) {
+                        var acc = 0f
+                        detectVerticalDragGestures(
+                            onDragEnd = { if (acc < -40f) onExpand(); acc = 0f },
+                            onVerticalDrag = { _, d -> acc += d }
+                        )
+                    }
                     .padding(horizontal = 10.dp, vertical = 9.dp)
             ) {
                 UrlArt(artwork, Modifier.size(48.dp), corner = 12.dp)
@@ -213,6 +226,15 @@ fun NowPlayingScreen(
     val albumId by vm.currentAlbumId.collectAsState()
     val artistId by vm.currentArtistId.collectAsState()
     val isLive by vm.isLive.collectAsState()
+    val autoLyrics by vm.autoLyrics.collectAsState()
+
+    // Inline karaoke: show synced lyrics in place of the cover, right here — no screen deeper.
+    var showLyricsInline by remember { mutableStateOf(autoLyrics) }
+    if (isLive && showLyricsInline) showLyricsInline = false
+    // Auto-download lyrics whenever the lyric view is active or the track changes (cached = instant).
+    LaunchedEffect(mediaId, showLyricsInline, isLive) {
+        if (showLyricsInline && !isLive) vm.loadLyrics()
+    }
 
     val artBrush by vm.artBrush.collectAsState()
     val brand = artBrush ?: LocalBrandBrush.current
@@ -245,7 +267,7 @@ fun NowPlayingScreen(
       Box(Modifier.fillMaxSize()) {
         Backdrop(artwork)
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+            Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -276,36 +298,58 @@ fun NowPlayingScreen(
                 )
             }
 
-            Spacer(Modifier.height(18.dp))
-            Box(
-                Modifier.fillMaxWidth(0.82f).aspectRatio(1f)
-                    .pointerInput(albumId) {
-                        var dx = 0f; var dy = 0f
-                        detectDragGestures(
-                            onDragEnd = {
-                                if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
-                                    if (dx < -80f) vm.next() else if (dx > 80f) vm.previous()
-                                } else if (dy < -100f) {
-                                    albumId?.let(onGoToAlbum)
-                                }
-                                dx = 0f; dy = 0f
-                            },
-                            onDrag = { change, amount -> change.consume(); dx += amount.x; dy += amount.y }
-                        )
-                    },
+            Spacer(Modifier.height(10.dp))
+            // Flexible media area — takes the space left after the fixed transport below,
+            // so nothing ever truncates and the vertical drag is free for swipe-to-dismiss.
+            BoxWithConstraints(
+                Modifier.weight(1f).fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
-                Surface(
-                    shape = RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shadowElevation = 26.dp,
-                    modifier = Modifier.fillMaxSize().scale(artScale)
-                ) {
-                    UrlArt(artwork, Modifier.fillMaxSize(), corner = 28.dp)
+                if (showLyricsInline && !isLive) {
+                    InlineLyrics(
+                        vm = vm,
+                        onClose = { showLyricsInline = false },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    val side = minOf(maxWidth, maxHeight)
+                    Box(
+                        Modifier.size(side)
+                            // Tap the cover to flip to karaoke lyrics (no screen deeper).
+                            .pointerInput(isLive) {
+                                detectTapGestures(onTap = { if (!isLive) showLyricsInline = true })
+                            }
+                            // Swipe: left/right = next/prev, down = dismiss to the mini player.
+                            .pointerInput(albumId) {
+                                var dx = 0f; var dy = 0f
+                                detectDragGestures(
+                                    onDragEnd = {
+                                        if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
+                                            if (dx < -80f) vm.next() else if (dx > 80f) vm.previous()
+                                        } else if (dy > 120f) {
+                                            onBack()
+                                        } else if (dy < -110f) {
+                                            if (!isLive) showLyricsInline = true
+                                        }
+                                        dx = 0f; dy = 0f
+                                    },
+                                    onDrag = { change, amount -> change.consume(); dx += amount.x; dy += amount.y }
+                                )
+                            }
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(28.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shadowElevation = 26.dp,
+                            modifier = Modifier.fillMaxSize().scale(artScale)
+                        ) {
+                            UrlArt(artwork, Modifier.fillMaxSize(), corner = 28.dp)
+                        }
+                    }
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(14.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -346,14 +390,18 @@ fun NowPlayingScreen(
             }
 
             if (!isLive) {
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    NpQuickChip(Icons.Filled.Lyrics, "Lyrics", onOpenLyrics)
-                    NpQuickChip(Icons.Filled.AutoAwesome, "About", onOpenInsights)
+                    NpQuickChip(
+                        if (showLyricsInline) Icons.Filled.Album else Icons.Filled.Lyrics,
+                        if (showLyricsInline) "Cover" else "Lyrics",
+                        active = showLyricsInline
+                    ) { showLyricsInline = !showLyricsInline }
+                    NpQuickChip(Icons.Filled.AutoAwesome, "About") { onOpenInsights() }
                 }
             }
 
@@ -524,13 +572,58 @@ private fun Backdrop(artwork: String?) {
     }
 }
 
+/** Karaoke/lyrics rendered inline in the media area — synced (auto-scroll + tap-to-seek) when available. */
 @Composable
-private fun NpQuickChip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+private fun InlineLyrics(vm: SonoraViewModel, onClose: () -> Unit, modifier: Modifier = Modifier) {
+    val synced by vm.syncedLyrics.collectAsState()
+    val plain by vm.lyrics.collectAsState()
+    val loading by vm.lyricsLoading.collectAsState()
+
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        modifier = modifier
+    ) {
+        Box(Modifier.fillMaxSize().padding(6.dp), contentAlignment = Alignment.Center) {
+            when {
+                synced != null -> SyncedLyrics(vm, synced!!)
+                !plain.isNullOrBlank() -> Text(
+                    plain ?: "",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp)
+                )
+                loading -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary, strokeWidth = 3.dp, modifier = Modifier.size(38.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Text("Loading lyrics…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Filled.Lyrics, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(34.dp))
+                    Spacer(Modifier.height(10.dp))
+                    Text("No lyrics for this track", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Tap to show the cover", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable(onClick = onClose))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NpQuickChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    active: Boolean = false,
+    onClick: () -> Unit
+) {
+    val bg = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .background(bg)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {

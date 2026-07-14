@@ -70,6 +70,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("resumeEnabled", false)
         set(v) = sp.edit().putBoolean("resumeEnabled", v).apply()
 
+    /** Show synced karaoke lyrics in place of the cover on Now Playing automatically (default off). */
+    var autoLyrics: Boolean
+        get() = sp.getBoolean("autoLyrics", false)
+        set(v) = sp.edit().putBoolean("autoLyrics", v).apply()
+
     /** Snapshot of the last playback (queue + position) for resume. */
     var lastPlaybackJson: String?
         get() = sp.getString("lastPlayback", null)

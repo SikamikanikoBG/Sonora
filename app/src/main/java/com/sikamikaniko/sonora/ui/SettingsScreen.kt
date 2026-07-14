@@ -212,6 +212,15 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                     }
                     androidx.compose.material3.Switch(checked = resume, onCheckedChange = { vm.setResumeEnabled(it) })
                 }
+                RowDivider()
+                val autoLyrics by vm.autoLyrics.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Auto lyrics on Now Playing")
+                        Text("Show synced karaoke lyrics in place of the cover automatically", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    androidx.compose.material3.Switch(checked = autoLyrics, onCheckedChange = { vm.setAutoLyrics(it) })
+                }
             }
 
             // ---- Storage ----

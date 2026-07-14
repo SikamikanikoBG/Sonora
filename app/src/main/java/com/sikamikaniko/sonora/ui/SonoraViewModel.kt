@@ -439,6 +439,133 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---------------------------------------------------------------------
+    // AI DJ selection pipeline (retrieval-augmented — scales to any library).
+    //
+    // Instead of stuffing the whole catalog into the prompt (slow, and impossible
+    // once the library is large), the model only turns the request into a tiny
+    // structured query grounded in the REAL genre vocabulary. A deterministic
+    // retriever then hits the server's own genre/artist/year indexes. The model
+    // never processes the catalog, so this is fast and reliable even for small
+    // models with tiny context windows.
+    // ---------------------------------------------------------------------
+    private data class DjQuery(
+        val genres: List<String> = emptyList(),
+        val artists: List<String> = emptyList(),
+        val decades: List<Int> = emptyList(),
+        val keywords: List<String> = emptyList(),
+        val energy: String? = null
+    ) {
+        val isEmpty get() = genres.isEmpty() && artists.isEmpty() && keywords.isEmpty()
+    }
+
+    /** Top-level DJ album selection: intent-extraction → index retrieval → fallbacks. */
+    private suspend fun djSelectAlbums(prompt: String, count: Int): List<Album> {
+        val q = extractDjQuery(prompt)
+        var albums = if (!q.isEmpty) retrieveAlbumsForQuery(q, count) else emptyList()
+        // Structured retrieval found nothing (odd request / no genre match) → try the
+        // classic numbered-pick on a sample, then finally a random handful.
+        if (albums.isEmpty()) albums = pickAlbums(prompt, count)
+        if (albums.isEmpty()) albums = fallbackRandomAlbums(count)
+        return albums
+    }
+
+    /** Stage A — the model maps the request to a compact JSON filter (tiny context). */
+    private suspend fun extractDjQuery(prompt: String): DjQuery {
+        var vocab = _genres.value.mapNotNull { it.value?.trim() }.filter { it.isNotBlank() }
+        if (vocab.isEmpty()) {
+            vocab = try {
+                Subsonic.api?.getGenres()?.response?.genres?.genre?.mapNotNull { it.value?.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+            } catch (_: Exception) { emptyList() }
+        }
+        val vocabLine = if (vocab.isNotEmpty())
+            "Available genres (pick ONLY from these where relevant): ${vocab.joinToString(", ")}\n\n" else ""
+        val sys = "You translate a music request into a compact JSON filter for a library search. " +
+            "Reply ONLY with JSON: {\"genres\":[],\"artists\":[],\"decades\":[1990],\"keywords\":[],\"energy\":\"low|medium|high|any\"}. " +
+            "Choose genres ONLY from the provided list. decades are 4-digit (e.g. 1980). keywords are extra words to match on titles/artists. No prose."
+        val json = AiClient.chat(
+            _aiBaseUrl.value, _aiModel.value,
+            listOf(AiClient.Msg("system", sys), AiClient.Msg("user", vocabLine + "Request: \"$prompt\"")),
+            json = true
+        )
+        return parseDjQuery(json, vocab)
+    }
+
+    private fun parseDjQuery(json: String?, vocab: List<String>): DjQuery {
+        if (json.isNullOrBlank()) return DjQuery()
+        return try {
+            val o = JsonParser.parseString(json).asJsonObject
+            fun strList(key: String): List<String> =
+                o.get(key)?.takeIf { it.isJsonArray }?.asJsonArray
+                    ?.mapNotNull { runCatching { it.asString }.getOrNull()?.trim() }
+                    ?.filter { it.isNotBlank() } ?: emptyList()
+            // Map the model's genre words onto real library genres so index lookups are exact.
+            val genres = strList("genres").mapNotNull { g ->
+                vocab.firstOrNull { it.equals(g, true) }
+                    ?: vocab.firstOrNull { it.contains(g, true) || g.contains(it, true) }
+            }.distinct()
+            val decades = (o.get("decades")?.takeIf { it.isJsonArray }?.asJsonArray)
+                ?.mapNotNull { el ->
+                    runCatching { el.asInt }.getOrNull()
+                        ?: runCatching { el.asString }.getOrNull()?.let { Regex("\\d{4}").find(it)?.value?.toIntOrNull() }
+                }?.distinct() ?: emptyList()
+            DjQuery(genres, strList("artists"), decades, strList("keywords"),
+                runCatching { o.get("energy")?.asString?.trim() }.getOrNull())
+        } catch (_: Exception) { DjQuery() }
+    }
+
+    /** Stage B — deterministic retrieval against the server's genre/artist indexes + local library. */
+    private suspend fun retrieveAlbumsForQuery(q: DjQuery, target: Int): List<Album> {
+        val pool = LinkedHashMap<String, Album>()
+        fun addAll(al: List<Album>?) { al?.forEach { pool.putIfAbsent(it.id, it) } }
+
+        for (g in q.genres.take(6)) {
+            try { addAll(Subsonic.api?.getAlbumList2("byGenre", 40, 0, g)?.response?.albumList2?.album) } catch (_: Exception) {}
+        }
+        for (a in q.artists.take(6)) {
+            try {
+                val r = Subsonic.api?.search3(a, songCount = 0, albumCount = 20, artistCount = 5)?.response?.searchResult3
+                addAll(r?.album?.filter { it.artist?.contains(a, true) == true })
+                r?.artist?.firstOrNull { it.name?.contains(a, true) == true }?.id?.let { aid ->
+                    addAll(Subsonic.api?.getArtist(aid)?.response?.artist?.album)
+                }
+            } catch (_: Exception) {}
+        }
+        // Keyword / genre-word match across the blended local list (also covers device music).
+        val kws = (q.keywords + q.genres).map { it.lowercase() }.filter { it.length >= 3 }
+        if (kws.isNotEmpty()) {
+            addAll(_albums.value.filter { al ->
+                val hay = "${al.name ?: ""} ${al.artist ?: ""}".lowercase()
+                kws.any { hay.contains(it) }
+            })
+        }
+        // Device albums whose songs carry a matching genre tag.
+        if (q.genres.isNotEmpty()) {
+            val gset = q.genres.map { it.lowercase() }.toSet()
+            val localIds = _localSongs.value.filter { it.genre?.lowercase() in gset }.mapNotNull { it.albumId }.toSet()
+            addAll(_albums.value.filter { it.id.removePrefix("localalbum-") in localIds && it.id.startsWith("localalbum-") })
+        }
+
+        var result = pool.values.toList()
+        // Prefer the requested decade(s) but don't hard-exclude everything else.
+        if (q.decades.isNotEmpty() && result.isNotEmpty()) {
+            fun inDecade(y: Int?) = y != null && q.decades.any { y >= it && y < it + 10 }
+            val (inDec, rest) = result.partition { inDecade(it.year) }
+            result = inDec.shuffled() + rest.shuffled()
+        } else {
+            result = result.shuffled()
+        }
+        return result.take(target)
+    }
+
+    private suspend fun fallbackRandomAlbums(count: Int): List<Album> {
+        val lib = _albums.value.ifEmpty {
+            try { Subsonic.api?.getAlbumList2("random", 100)?.response?.albumList2?.album ?: emptyList() }
+            catch (_: Exception) { emptyList() }
+        }
+        return lib.shuffled().take(count)
+    }
+
     private suspend fun gatherSongs(albums: List<Album>): List<Song> =
         albums.flatMap { al ->
             if (al.id.startsWith("localalbum-")) {
@@ -463,7 +590,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _aiStatus.value = "Thinking…"
         _mixSongs.value = emptyList()
         try {
-            val albums = pickAlbums(prompt, 10)
+            val albums = djSelectAlbums(prompt, 12)
             if (albums.isEmpty()) { _aiStatus.value = "Couldn't reach the AI, or no matches — check the AI settings & your connection."; return@launch }
             _aiStatus.value = "Gathering tracks…"
             val songs = gatherSongs(albums).shuffled()
@@ -501,7 +628,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val seed = radioSeed ?: "${_artist.value ?: ""} ${_albumTitle.value ?: ""}"
-                val albums = pickAlbums("Music similar in style and mood to: $seed. Keep it varied.", 4)
+                val albums = djSelectAlbums("Music similar in style and mood to: $seed. Keep it varied.", 5)
                 val songs = gatherSongs(albums).shuffled().take(20)
                 if (songs.isNotEmpty()) addToQueue(songs)
             } catch (_: Exception) {
@@ -958,6 +1085,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     private val _resumeEnabled = MutableStateFlow(prefs.resumeEnabled)
     val resumeEnabled: StateFlow<Boolean> = _resumeEnabled.asStateFlow()
     fun setResumeEnabled(v: Boolean) { prefs.resumeEnabled = v; _resumeEnabled.value = v }
+
+    private val _autoLyrics = MutableStateFlow(prefs.autoLyrics)
+    val autoLyrics: StateFlow<Boolean> = _autoLyrics.asStateFlow()
+    fun setAutoLyrics(v: Boolean) { prefs.autoLyrics = v; _autoLyrics.value = v }
 
     private fun savePlaybackSnapshot() {
         val c = controller ?: return
