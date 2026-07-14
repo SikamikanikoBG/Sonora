@@ -116,19 +116,8 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
                 onVoice = startVoice
             )
         }
-        if (favStations.isNotEmpty()) {
-            item {
-                SectionHeader("Favourite stations")
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(favStations, key = { "favhome_" + it.stationuuid }) { st ->
-                        RadioMiniCard(st) { vm.playStation(st) }
-                    }
-                }
-            }
-        }
+        // --- Your music first: pick up where you left off, then your mixes, then the rest ---
+        item { Rail("Recently played", recent, vm, nav) }
         if (mixes.isNotEmpty() || aiReady) {
             item {
                 SectionHeader("Your AI mixes")
@@ -151,6 +140,11 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
                 }
             }
         }
+        item { Rail("Recently added", newest, vm, nav) }
+        item { Rail("Most played", frequent, vm, nav) }
+        item { Rail("Discover", random, vm, nav) }
+
+        // --- Radio grouped together, lower down ---
         if (recentStations.isNotEmpty()) {
             item {
                 SectionHeader("Recent radio")
@@ -164,10 +158,19 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
                 }
             }
         }
-        item { Rail("Recently added", newest, vm, nav) }
-        item { Rail("Recently played", recent, vm, nav) }
-        item { Rail("Most played", frequent, vm, nav) }
-        item { Rail("Discover", random, vm, nav) }
+        if (favStations.isNotEmpty()) {
+            item {
+                SectionHeader("Favourite stations")
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(favStations, key = { "favhome_" + it.stationuuid }) { st ->
+                        RadioMiniCard(st) { vm.playStation(st) }
+                    }
+                }
+            }
+        }
         item { BannerAd(Modifier.padding(top = 16.dp, start = 16.dp, end = 16.dp)) }
         item { Spacer(Modifier.height(28.dp)) }
     }
