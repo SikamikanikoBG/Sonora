@@ -41,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -52,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -85,6 +87,16 @@ fun LibraryScreen(vm: SonoraViewModel, nav: NavController) {
     var query by remember { mutableStateOf("") }
     val titles = listOf("Albums", "Artists", "Genres", "Favourites", "Device")
 
+    // Voice search — same Google recogniser as the AI DJ.
+    val startVoice = rememberVoiceInput("Say a song, artist or album…") { spoken ->
+        query = spoken; vm.search(spoken); vm.addRecentSearch(spoken)
+    }
+    // Pick up a voice query started from the Home quick-search.
+    val searchReq by vm.searchRequest.collectAsState()
+    LaunchedEffect(searchReq) {
+        searchReq?.let { q -> query = q; vm.search(q); vm.addRecentSearch(q); vm.consumeSearchRequest() }
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -101,8 +113,11 @@ fun LibraryScreen(vm: SonoraViewModel, nav: NavController) {
             onValueChange = { query = it; vm.search(it) },
             leadingIcon = { Icon(Icons.Filled.Search, null) },
             trailingIcon = {
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = { query = ""; vm.search("") }) { Icon(Icons.Filled.Clear, "Clear") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = ""; vm.search("") }) { Icon(Icons.Filled.Clear, "Clear") }
+                    }
+                    IconButton(onClick = startVoice) { Icon(Icons.Filled.Mic, "Voice search", tint = MaterialTheme.colorScheme.primary) }
                 }
             },
             placeholder = { Text("Search your library") },

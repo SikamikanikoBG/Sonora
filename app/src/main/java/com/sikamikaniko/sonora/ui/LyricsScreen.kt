@@ -100,7 +100,7 @@ fun LyricsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-fun SyncedLyrics(vm: SonoraViewModel, lines: List<Pair<Long, String>>) {
+fun SyncedLyrics(vm: SonoraViewModel, lines: List<Pair<Long, String>>, userScrollEnabled: Boolean = true) {
     val position by vm.position.collectAsState()
     val current = remember(position, lines) {
         lines.indexOfLast { it.first <= position }.coerceIn(0, lines.lastIndex)
@@ -109,7 +109,7 @@ fun SyncedLyrics(vm: SonoraViewModel, lines: List<Pair<Long, String>>) {
     LaunchedEffect(current) {
         if (lines.isNotEmpty()) state.animateScrollToItem(current.coerceIn(0, lines.lastIndex), scrollOffset = -320)
     }
-    LazyColumn(state = state, modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
+    LazyColumn(state = state, userScrollEnabled = userScrollEnabled, modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
         itemsIndexed(lines) { i, line ->
             val active = i == current
             Text(

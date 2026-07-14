@@ -71,6 +71,11 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = Prefs(app)
 
+    // Declared FIRST: several StateFlows below (favourites, recent stations) deserialize
+    // their persisted value at construction, so this must exist before them — otherwise
+    // it's null during init and every restart silently loads empty (lost favourites).
+    private val aiGson = Gson()
+
     val serverUrl: String? get() = prefs.baseUrl
     val username: String? get() = prefs.username
 
@@ -272,7 +277,6 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- AI ----
-    private val aiGson = Gson()
 
     // Guard rails for small/hallucination-prone models, and anti-repetition.
     private val antiHallucination = "Only say things you are genuinely confident about. If you don't know the " +
@@ -933,6 +937,12 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Search ----
     private val _searchResult = MutableStateFlow<SearchResult3?>(null)
     val searchResult: StateFlow<SearchResult3?> = _searchResult.asStateFlow()
+
+    // One-shot search request (e.g. voice search from Home) picked up by the Library screen.
+    private val _searchRequest = MutableStateFlow<String?>(null)
+    val searchRequest: StateFlow<String?> = _searchRequest.asStateFlow()
+    fun requestLibrarySearch(q: String) { if (q.isNotBlank()) _searchRequest.value = q.trim() }
+    fun consumeSearchRequest() { _searchRequest.value = null }
 
     // ---- Favourites ----
     private val _starredIds = MutableStateFlow<Set<String>>(emptySet())

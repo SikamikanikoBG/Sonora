@@ -33,9 +33,9 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -85,6 +85,12 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
     val context = LocalContext.current
     var renaming by remember { mutableStateOf<AiMix?>(null) }
 
+    // Voice quick-search: speak a song/artist, jump straight to Library results.
+    val startVoice = rememberVoiceInput("Say a song, artist or album…") { spoken ->
+        vm.requestLibrarySearch(spoken)
+        nav.navigate("library")
+    }
+
     renaming?.let { mix ->
         var name by remember(mix.id) { mutableStateOf(mix.name) }
         AlertDialog(
@@ -102,6 +108,12 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
                 brand = brand,
                 onAsk = { nav.navigate("ai") },
                 onShuffle = { vm.shuffleLibrary() }
+            )
+        }
+        item {
+            HomeQuickSearch(
+                onOpenSearch = { nav.navigate("library") },
+                onVoice = startVoice
             )
         }
         if (favStations.isNotEmpty()) {
@@ -207,6 +219,38 @@ private fun HomeHeader(
                 Text("Shuffle", color = onBrand, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
             }
             IconButton(onClick = onAsk) { Icon(Icons.Filled.AutoAwesome, "Ask Sonora", tint = onBrand) }
+        }
+    }
+}
+
+/** Prominent quick search — tap to search, or tap the mic to speak (great while driving). */
+@Composable
+private fun HomeQuickSearch(onOpenSearch: () -> Unit, onVoice: () -> Unit) {
+    val brand = LocalBrandBrush.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+            .padding(start = 18.dp, end = 6.dp)
+    ) {
+        Icon(Icons.Filled.Search, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(12.dp))
+        Text(
+            "Search songs, artists, albums…",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).clickable(onClick = onOpenSearch).padding(vertical = 14.dp)
+        )
+        Box(
+            Modifier.size(44.dp).clip(RoundedCornerShape(50)).background(brand).clickable(onClick = onVoice),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Mic, "Voice search", tint = Color.White, modifier = Modifier.size(22.dp))
         }
     }
 }

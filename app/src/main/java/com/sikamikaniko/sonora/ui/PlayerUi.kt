@@ -308,45 +308,55 @@ fun NowPlayingScreen(
                 Modifier.weight(1f).fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
-                if (showLyricsInline && !isLive) {
-                    InlineLyrics(
-                        vm = vm,
-                        onClose = { showLyricsInline = false },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    val side = minOf(maxWidth, maxHeight)
-                    Box(
-                        Modifier.size(side)
-                            // Tap the cover to flip to karaoke lyrics (no screen deeper).
-                            .pointerInput(isLive) {
-                                detectTapGestures(onTap = { if (!isLive) showLyricsInline = true })
-                            }
-                            // Swipe: left/right = next/prev, down = dismiss to the mini player.
-                            .pointerInput(albumId) {
-                                var dx = 0f; var dy = 0f
-                                detectDragGestures(
-                                    onDragEnd = {
-                                        if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
-                                            if (dx < -80f) vm.next() else if (dx > 80f) vm.previous()
-                                        } else if (dy > 120f) {
-                                            onBack()
-                                        } else if (dy < -110f) {
-                                            if (!isLive) showLyricsInline = true
-                                        }
-                                        dx = 0f; dy = 0f
-                                    },
-                                    onDrag = { change, amount -> change.consume(); dx += amount.x; dy += amount.y }
-                                )
-                            }
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(28.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            shadowElevation = 26.dp,
-                            modifier = Modifier.fillMaxSize().scale(artScale)
+                // One unified swipe layer over the whole media area (cover OR lyrics):
+                //   left/right = next/prev
+                //   swipe UP   = go a level deeper: cover → lyrics → album
+                //   swipe DOWN = go back a level:   lyrics → cover, cover → dismiss
+                Box(
+                    Modifier.fillMaxSize()
+                        .pointerInput(albumId, showLyricsInline, isLive) {
+                            var dx = 0f; var dy = 0f
+                            detectDragGestures(
+                                onDragEnd = {
+                                    if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
+                                        if (dx < -80f) vm.next() else if (dx > 80f) vm.previous()
+                                    } else if (dy > 120f) {
+                                        if (showLyricsInline) showLyricsInline = false else onBack()
+                                    } else if (dy < -110f) {
+                                        if (isLive) Unit
+                                        else if (!showLyricsInline) showLyricsInline = true
+                                        else albumId?.let(onGoToAlbum)
+                                    }
+                                    dx = 0f; dy = 0f
+                                },
+                                onDrag = { change, amount -> change.consume(); dx += amount.x; dy += amount.y }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (showLyricsInline && !isLive) {
+                        InlineLyrics(
+                            vm = vm,
+                            onClose = { showLyricsInline = false },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        val side = minOf(maxWidth, maxHeight)
+                        Box(
+                            Modifier.size(side)
+                                // Tap the cover to flip to karaoke lyrics (no screen deeper).
+                                .pointerInput(isLive) {
+                                    detectTapGestures(onTap = { if (!isLive) showLyricsInline = true })
+                                }
                         ) {
-                            UrlArt(artwork, Modifier.fillMaxSize(), corner = 28.dp)
+                            Surface(
+                                shape = RoundedCornerShape(28.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shadowElevation = 26.dp,
+                                modifier = Modifier.fillMaxSize().scale(artScale)
+                            ) {
+                                UrlArt(artwork, Modifier.fillMaxSize(), corner = 28.dp)
+                            }
                         }
                     }
                 }
@@ -609,7 +619,8 @@ private fun InlineLyrics(vm: SonoraViewModel, onClose: () -> Unit, modifier: Mod
     ) {
         Box(Modifier.fillMaxSize().padding(6.dp), contentAlignment = Alignment.Center) {
             when {
-                synced != null -> SyncedLyrics(vm, synced!!)
+                // Auto-follow only (no manual scroll) so the swipe-up gesture reaches the album shortcut.
+                synced != null -> SyncedLyrics(vm, synced!!, userScrollEnabled = false)
                 !plain.isNullOrBlank() -> Text(
                     plain ?: "",
                     style = MaterialTheme.typography.bodyLarge,
