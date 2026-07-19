@@ -34,6 +34,8 @@ import com.sikamikaniko.sonora.data.OnlineLyrics
 import com.sikamikaniko.sonora.data.Playlist
 import com.sikamikaniko.sonora.data.PlaylistWithSongs
 import com.sikamikaniko.sonora.data.PlaybackSnapshot
+import com.sikamikaniko.sonora.data.loadPlaybackSnapshot
+import com.sikamikaniko.sonora.data.toMediaItems
 import com.sikamikaniko.sonora.data.Prefs
 import com.sikamikaniko.sonora.data.RadioBrowser
 import com.sikamikaniko.sonora.data.SavedTrack
@@ -1109,6 +1111,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     val autoplayOnStart: StateFlow<Boolean> = _autoplayOnStart.asStateFlow()
     fun setAutoplayOnStart(v: Boolean) { prefs.autoplayOnStart = v; _autoplayOnStart.value = v }
 
+    private val _btAutoplay = MutableStateFlow(prefs.btAutoplay)
+    val btAutoplay: StateFlow<Boolean> = _btAutoplay.asStateFlow()
+    fun setBtAutoplay(v: Boolean) { prefs.btAutoplay = v; _btAutoplay.value = v }
+
     private val _autoLyrics = MutableStateFlow(prefs.autoLyrics)
     val autoLyrics: StateFlow<Boolean> = _autoLyrics.asStateFlow()
     fun setAutoLyrics(v: Boolean) { prefs.autoLyrics = v; _autoLyrics.value = v }
@@ -1148,22 +1154,9 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             if (autoplay && !c.isPlaying) c.play()
             return
         }
-        val json = prefs.lastPlaybackJson ?: return
-        val snap = try { aiGson.fromJson(json, PlaybackSnapshot::class.java) } catch (_: Exception) { null } ?: return
-        if (snap.tracks.isEmpty()) return
-        val items = snap.tracks.map { t ->
-            MediaItem.Builder()
-                .setMediaId(t.mediaId)
-                .setUri(t.uri)
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(t.title)
-                        .setArtist(t.artist)
-                        .apply { t.artUri?.let { setArtworkUri(Uri.parse(it)) } }
-                        .build()
-                )
-                .build()
-        }
+        val snap = prefs.loadPlaybackSnapshot(aiGson) ?: return
+        val items = snap.toMediaItems()
+        if (items.isEmpty()) return
         c.setMediaItems(items, snap.index.coerceIn(0, items.lastIndex), snap.positionMs)
         c.prepare()
         if (autoplay || snap.wasPlaying) c.play()

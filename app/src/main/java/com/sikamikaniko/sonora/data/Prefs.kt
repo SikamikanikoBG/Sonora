@@ -75,6 +75,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("autoplayOnStart", true)
         set(v) = sp.edit().putBoolean("autoplayOnStart", v).apply()
 
+    /** Start playing as soon as a Bluetooth audio device connects, app open or not (default on). */
+    var btAutoplay: Boolean
+        get() = sp.getBoolean("btAutoplay", true)
+        set(v) = sp.edit().putBoolean("btAutoplay", v).apply()
+
     /** Show synced karaoke lyrics in place of the cover on Now Playing automatically (default off). */
     var autoLyrics: Boolean
         get() = sp.getBoolean("autoLyrics", false)

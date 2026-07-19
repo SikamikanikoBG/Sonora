@@ -1,5 +1,12 @@
 package com.sikamikaniko.sonora.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -211,6 +218,51 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                         Text("Start playing your last queue the moment Sonora opens", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     androidx.compose.material3.Switch(checked = autoplay, onCheckedChange = { vm.setAutoplayOnStart(it) })
+                }
+                RowDivider()
+                val btAutoplay by vm.btAutoplay.collectAsState()
+                // Android 12+ withholds the "device connected" broadcast unless
+                // BLUETOOTH_CONNECT is granted, so switching this on without asking for
+                // the permission would leave a switch that reads ON and does nothing.
+                val ctx = LocalContext.current
+                var btGranted by remember {
+                    mutableStateOf(
+                        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                            ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) ==
+                            PackageManager.PERMISSION_GRANTED
+                    )
+                }
+                val askBluetooth = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { granted -> btGranted = granted }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    val needsGrant = btAutoplay && !btGranted
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clickable(enabled = needsGrant) {
+                                askBluetooth.launch(Manifest.permission.BLUETOOTH_CONNECT)
+                            }
+                    ) {
+                        Text("Play on Bluetooth connect")
+                        Text(
+                            if (needsGrant)
+                                "Tap here to grant the Bluetooth permission — Android won't tell Sonora about your car without it"
+                            else "Car stereo or headphones connect → Sonora starts, app open or not",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (needsGrant) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = btAutoplay,
+                        onCheckedChange = {
+                            vm.setBtAutoplay(it)
+                            if (it && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !btGranted) {
+                                askBluetooth.launch(Manifest.permission.BLUETOOTH_CONNECT)
+                            }
+                        }
+                    )
                 }
                 RowDivider()
                 val resume by vm.resumeEnabled.collectAsState()
