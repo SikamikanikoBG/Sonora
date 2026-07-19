@@ -59,7 +59,23 @@ jobs:
           name: sonora-release-aab
           path: sonora-release.aab
 
+      # NOT action-gh-release: this job and "Build APK" run on the same tag, and when
+      # both try to *create* the release one loses the race and its asset ends up on a
+      # stray draft (v1.9.5 shipped without its APK that way, which breaks the in-app
+      # updater). Build APK owns creating the release; this job only waits and uploads.
       - name: Attach AAB to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: sonora-release.aab
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for i in $(seq 1 30); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" sonora-release.aab --clobber
+              exit 0
+            fi
+            echo "Release $TAG not there yet, waiting… ($i/30)"
+            sleep 10
+          done
+          echo "::error::Release $TAG never appeared — Build APK must have failed."
+          exit 1
