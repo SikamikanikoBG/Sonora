@@ -42,7 +42,10 @@ import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -234,7 +237,12 @@ private fun LibrarySearchResults(vm: SonoraViewModel, nav: NavController, query:
         albums.mapNotNull { it.name }.filter { it.contains(q, true) && !it.equals(q, true) }.forEach { set.add(it) }
         set.take(6)
     }
+    val hasResults = artists.isNotEmpty() || albums.isNotEmpty() || songs.isNotEmpty()
     LazyColumn(Modifier.fillMaxSize()) {
+        // Play the WHOLE result set — artists' albums included, not just song-title hits.
+        if (hasResults) {
+            item { SearchPlayAllBar(vm) { vm.addRecentSearch(query) } }
+        }
         if (suggestions.isNotEmpty()) {
             item {
                 FlowRow(
@@ -274,6 +282,59 @@ private fun LibrarySearchResults(vm: SonoraViewModel, nav: NavController, query:
             itemsIndexed(songs) { index, song -> SongItem(vm, nav, song, songs, index, showIndex = false) }
         }
         item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+/**
+ * "Play everything I found" bar. Searching an artist returns mostly artists and albums,
+ * so the per-section Play all on Songs was never enough — this one queues the lot.
+ */
+@Composable
+private fun SearchPlayAllBar(vm: SonoraViewModel, onAct: () -> Unit) {
+    val brand = LocalBrandBrush.current
+    val haptic = LocalHapticFeedback.current
+    val busy by vm.searchPlayBusy.collectAsState()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 2.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(50))
+                .background(brand)
+                .clickable(enabled = !busy) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onAct(); vm.playAllSearchResults(false)
+                }
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+        ) {
+            if (busy) {
+                CircularProgressIndicator(
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+            } else {
+                Icon(
+                    Icons.Filled.PlayArrow, null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(Modifier.size(8.dp))
+            Text(
+                if (busy) "Building queue…" else "Play all results",
+                color = MaterialTheme.colorScheme.onPrimary,
+                style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold
+            )
+        }
+        Spacer(Modifier.size(4.dp))
+        IconButton(
+            onClick = { onAct(); vm.playAllSearchResults(true) },
+            enabled = !busy
+        ) { Icon(Icons.Filled.Shuffle, "Shuffle all results") }
     }
 }
 

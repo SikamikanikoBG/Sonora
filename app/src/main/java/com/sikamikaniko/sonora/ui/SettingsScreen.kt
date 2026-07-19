@@ -204,11 +204,20 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
 
             // ---- Playback ----
             SectionCard(title = "Playback", icon = Icons.Filled.PlayArrow) {
+                val autoplay by vm.autoplayOnStart.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Autoplay on start")
+                        Text("Start playing your last queue the moment Sonora opens", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    androidx.compose.material3.Switch(checked = autoplay, onCheckedChange = { vm.setAutoplayOnStart(it) })
+                }
+                RowDivider()
                 val resume by vm.resumeEnabled.collectAsState()
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) {
                         Text("Resume on open")
-                        Text("Pick up exactly where you left off — song, playlist or radio", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Restore the last queue and position without starting it — autoplay covers this too", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     androidx.compose.material3.Switch(checked = resume, onCheckedChange = { vm.setResumeEnabled(it) })
                 }

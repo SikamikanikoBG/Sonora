@@ -1105,6 +1105,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     val resumeEnabled: StateFlow<Boolean> = _resumeEnabled.asStateFlow()
     fun setResumeEnabled(v: Boolean) { prefs.resumeEnabled = v; _resumeEnabled.value = v }
 
+    private val _autoplayOnStart = MutableStateFlow(prefs.autoplayOnStart)
+    val autoplayOnStart: StateFlow<Boolean> = _autoplayOnStart.asStateFlow()
+    fun setAutoplayOnStart(v: Boolean) { prefs.autoplayOnStart = v; _autoplayOnStart.value = v }
+
     private val _autoLyrics = MutableStateFlow(prefs.autoLyrics)
     val autoLyrics: StateFlow<Boolean> = _autoLyrics.asStateFlow()
     fun setAutoLyrics(v: Boolean) { prefs.autoLyrics = v; _autoLyrics.value = v }
@@ -1134,9 +1138,16 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun restorePlaybackSnapshot() {
-        if (!_resumeEnabled.value) return
+        // Read straight from prefs, not the StateFlows: this runs from the controller
+        // callback, which can land before those properties are constructed.
+        val autoplay = prefs.autoplayOnStart
+        if (!prefs.resumeEnabled && !autoplay) return
         val c = controller ?: return
-        if (c.mediaItemCount > 0) return
+        if (c.mediaItemCount > 0) {
+            // The service outlived the UI and still holds the queue — just un-pause it.
+            if (autoplay && !c.isPlaying) c.play()
+            return
+        }
         val json = prefs.lastPlaybackJson ?: return
         val snap = try { aiGson.fromJson(json, PlaybackSnapshot::class.java) } catch (_: Exception) { null } ?: return
         if (snap.tracks.isEmpty()) return
@@ -1155,7 +1166,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
         c.setMediaItems(items, snap.index.coerceIn(0, items.lastIndex), snap.positionMs)
         c.prepare()
-        if (snap.wasPlaying) c.play()
+        if (autoplay || snap.wasPlaying) c.play()
     }
 
     private fun connectController() {
@@ -1543,6 +1554,43 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun playSearchSongs(shuffle: Boolean) {
         val songs = _searchResult.value?.song ?: return
         if (shuffle) shufflePlay(songs) else playSongs(songs, 0)
+    }
+
+    private val _searchPlayBusy = MutableStateFlow(false)
+    val searchPlayBusy: StateFlow<Boolean> = _searchPlayBusy.asStateFlow()
+
+    /**
+     * Play *everything* the search turned up, not just the song-title matches.
+     * Searching an artist ("depeche mode") mostly returns artists and albums — their
+     * tracks were previously unreachable in bulk, so you had to open one and pick a song.
+     * Collects: matching songs + every track of the matching albums + every album of the
+     * matching artists, de-duplicated, in that order.
+     */
+    fun playAllSearchResults(shuffle: Boolean) {
+        val res = _searchResult.value ?: return
+        if (_searchPlayBusy.value) return
+        viewModelScope.launch {
+            _searchPlayBusy.value = true
+            try {
+                val albums = LinkedHashMap<String, Album>()
+                (res.album ?: emptyList()).forEach { albums[it.id] = it }
+                for (ar in res.artist ?: emptyList()) {
+                    val arAlbums = try {
+                        Subsonic.api?.getArtist(ar.id)?.response?.artist?.album
+                    } catch (_: Exception) { null } ?: emptyList()
+                    arAlbums.forEach { al -> albums.putIfAbsent(al.id, al) }
+                }
+                val out = LinkedHashMap<String, Song>()
+                (res.song ?: emptyList()).forEach { out[it.id] = it }
+                gatherSongs(albums.values.toList()).forEach { s -> out.putIfAbsent(s.id, s) }
+                val songs = out.values.toList()
+                if (songs.isEmpty()) { _toast.value = "Nothing playable in these results"; return@launch }
+                if (shuffle) shufflePlay(songs) else playSongs(songs, 0)
+                _toast.value = "Playing ${songs.size} tracks"
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Could not build a queue from these results"
+            } finally { _searchPlayBusy.value = false }
+        }
     }
 
     // ---- Playback ----

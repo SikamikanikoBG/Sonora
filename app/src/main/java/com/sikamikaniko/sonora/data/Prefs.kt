@@ -70,6 +70,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("resumeEnabled", false)
         set(v) = sp.edit().putBoolean("resumeEnabled", v).apply()
 
+    /** Start playing the last queue as soon as the app opens (default on). */
+    var autoplayOnStart: Boolean
+        get() = sp.getBoolean("autoplayOnStart", true)
+        set(v) = sp.edit().putBoolean("autoplayOnStart", v).apply()
+
     /** Show synced karaoke lyrics in place of the cover on Now Playing automatically (default off). */
     var autoLyrics: Boolean
         get() = sp.getBoolean("autoLyrics", false)
