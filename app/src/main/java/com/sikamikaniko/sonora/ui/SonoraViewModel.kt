@@ -53,8 +53,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import java.time.LocalDate
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -1334,6 +1339,116 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         try {
             _genreAlbums.value = Subsonic.api?.getAlbumList2("byGenre", 500, 0, name)?.response?.albumList2?.album ?: emptyList()
         } catch (_: Exception) { _genreAlbums.value = emptyList() }
+    }
+
+    // ---- Discover: the shop floor ----
+    //
+    // Discovery in a personal library is archaeology, not recommendation: the point is
+    // surfacing what he already owns and never plays. All of it is computed from the
+    // catalogue on the device, so the crates keep working when the AI is unreachable.
+
+    private companion object {
+        const val SHELF_PAGE = 500
+        const val SHELF_MAX = 10_000
+        /** A crate can hold thousands of albums; don't try to queue all of them. */
+        const val CRATE_PLAY_MAX = 60
+    }
+
+    /** The whole catalogue, paged in — the Library's list is capped at 500 and sorted. */
+    private val _shelf = MutableStateFlow<List<Album>>(emptyList())
+    val shelf: StateFlow<List<Album>> = _shelf.asStateFlow()
+    private val _shelfLoading = MutableStateFlow(false)
+    val shelfLoading: StateFlow<Boolean> = _shelfLoading.asStateFlow()
+
+    fun loadShelf(force: Boolean = false) = viewModelScope.launch {
+        if (_shelfLoading.value) return@launch
+        if (!force && _shelf.value.isNotEmpty()) return@launch
+        _shelfLoading.value = true
+        try {
+            val out = ArrayList<Album>()
+            var offset = 0
+            while (offset < SHELF_MAX) {
+                val page = Subsonic.api
+                    ?.getAlbumList2("alphabeticalByName", SHELF_PAGE, offset)
+                    ?.response?.albumList2?.album ?: emptyList()
+                out.addAll(page)
+                if (page.size < SHELF_PAGE) break
+                offset += SHELF_PAGE
+            }
+            _shelf.value = out + localAlbums()
+        } catch (e: Exception) {
+            _error.value = e.message ?: "Could not read your library"
+        } finally { _shelfLoading.value = false }
+    }
+
+    /**
+     * Albums he owns but has never pressed play on. Navidrome reports playCount, which
+     * makes this exact; on a server that doesn't, we fall back to "not among the most
+     * played and not played recently" — approximate, so the UI calls it "rarely played".
+     */
+    val neverPlayed: StateFlow<List<Album>> =
+        combine(_shelf, _frequent, _recent) { shelf, frequent, recent ->
+            if (shelf.isEmpty()) return@combine emptyList()
+            if (shelf.any { it.playCount != null }) {
+                shelf.filter { (it.playCount ?: 0) == 0 }
+            } else {
+                val played = (frequent.map { it.id } + recent.map { it.id }).toSet()
+                shelf.filter { it.id !in played }
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** True when the server gave us real play counts, so the UI can say "never" honestly. */
+    val playCountsExact: StateFlow<Boolean> =
+        _shelf.map { s -> s.any { it.playCount != null } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** Starred once, not touched since — the ones worth an apology. */
+    val forgottenFavourites: StateFlow<List<Album>> =
+        combine(_starredAlbums, _recent) { starred, recent ->
+            val fresh = recent.map { it.id }.toSet()
+            starred.filter { it.id !in fresh }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Decade -> albums, newest decade first. Albums with no year are left out. */
+    val decades: StateFlow<List<Pair<Int, List<Album>>>> =
+        _shelf.map { shelf ->
+            shelf.filter { (it.year ?: 0) > 1000 }
+                .groupBy { (it.year!! / 10) * 10 }
+                .toList()
+                .sortedByDescending { it.first }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * One album, the same one all day. A pick that changes every time Home is opened is
+     * not a recommendation, it's a shuffle — so it's seeded on the date.
+     */
+    val tonightsPick: StateFlow<Album?> =
+        combine(_shelf, neverPlayed) { shelf, unplayed ->
+            val pool = unplayed.ifEmpty { shelf }
+            if (pool.isEmpty()) null
+            else pool[(LocalDate.now().toEpochDay().mod(pool.size))]
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val _blindPick = MutableStateFlow<Album?>(null)
+    val blindPick: StateFlow<Album?> = _blindPick.asStateFlow()
+    fun rollBlindPick() {
+        val pool = neverPlayed.value.ifEmpty { _shelf.value }
+        _blindPick.value = pool.randomOrNull()
+    }
+    fun clearBlindPick() { _blindPick.value = null }
+
+    /** Everything on one shelf, queued in order. */
+    fun playAlbums(albums: List<Album>, shuffle: Boolean) = viewModelScope.launch {
+        if (albums.isEmpty()) return@launch
+        _shelfLoading.value = true
+        try {
+            val songs = gatherSongs(albums.take(CRATE_PLAY_MAX))
+            if (songs.isEmpty()) { _toast.value = "Nothing playable on this shelf"; return@launch }
+            if (shuffle) shufflePlay(songs) else playSongs(songs, 0)
+            _toast.value = "Playing ${songs.size} tracks"
+        } catch (e: Exception) {
+            _error.value = e.message ?: "Could not build a queue from this shelf"
+        } finally { _shelfLoading.value = false }
     }
 
     fun shuffleLibrary() = viewModelScope.launch {

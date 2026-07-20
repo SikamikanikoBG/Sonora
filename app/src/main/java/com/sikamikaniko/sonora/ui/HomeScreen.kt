@@ -73,7 +73,6 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
     val newest by vm.newest.collectAsState()
     val recent by vm.recent.collectAsState()
     val frequent by vm.frequent.collectAsState()
-    val random by vm.randomAlbums.collectAsState()
     val mixes by vm.mixes.collectAsState()
     val recentStations by vm.recentStations.collectAsState()
     val favStations by vm.favStations.collectAsState()
@@ -142,7 +141,9 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
         }
         item { Rail("Recently added", newest, vm, nav) }
         item { Rail("Most played", frequent, vm, nav) }
-        item { Rail("Discover", random, vm, nav) }
+        // The shop, not a shelf: a rail of random covers gave no reason to care about
+        // any of them. This leads with one pick and a reason, then the crates.
+        item { DiscoverStorefront(vm, nav) }
 
         // --- Radio grouped together, lower down ---
         if (recentStations.isNotEmpty()) {
