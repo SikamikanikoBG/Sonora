@@ -132,6 +132,10 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             composable("genre/{name}") { entry ->
                 GenreScreen(vm, entry.arguments?.getString("name") ?: "", nav)
             }
+            composable("discover") { DiscoverScreen(vm, nav) }
+            composable("crate/{key}") { entry ->
+                CrateScreen(vm, entry.arguments?.getString("key") ?: "all", nav)
+            }
             composable("settings") { SettingsScreen(vm, nav) }
             composable("ai") { AskScreen(vm, nav) }
             composable(Tab.Radio.route) { RadioScreen(vm, nav) }

@@ -101,7 +101,10 @@ data class Album(
     val coverArt: String? = null,
     val songCount: Int? = null,
     val year: Int? = null,
-    val starred: String? = null
+    val starred: String? = null,
+    /** Navidrome sends this; plain Subsonic servers may not. Null means "unknown", not zero. */
+    val playCount: Int? = null,
+    val genre: String? = null
 )
 
 data class Artist(
