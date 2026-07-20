@@ -50,6 +50,9 @@ import java.util.UUID
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -1273,6 +1276,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _currentArtist.value = null; _currentPlaylist.value = null
         _searchResult.value = null; _starredIds.value = emptySet()
         _starredSongs.value = emptyList(); _starredAlbums.value = emptyList()
+        // Without this, signing into a different server shows the old account's catalogue:
+        // loadShelf() short-circuits on a non-empty shelf.
+        _shelf.value = emptyList(); _playedIds.value = emptySet(); _recentIds.value = emptySet()
+        _blindPick.value = null
         clearSelection()
         _hasCurrent.value = false
         _loggedIn.value = false
@@ -1347,9 +1354,13 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     // surfacing what he already owns and never plays. All of it is computed from the
     // catalogue on the device, so the crates keep working when the AI is unreachable.
 
-    private companion object {
-        const val SHELF_PAGE = 500
-        const val SHELF_MAX = 10_000
+    companion object {
+        private const val SHELF_PAGE = 500
+        private const val SHELF_MAX = 10_000
+        /** How many albums to resolve when a whole shelf is played. */
+        private const val PLAYED_PROBE = 500
+        /** Fetch album tracklists this many at a time — serial over 60 albums is ~30s. */
+        private const val GATHER_PARALLELISM = 6
         /** A crate can hold thousands of albums; don't try to queue all of them. */
         const val CRATE_PLAY_MAX = 60
     }
@@ -1359,6 +1370,18 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     val shelf: StateFlow<List<Album>> = _shelf.asStateFlow()
     private val _shelfLoading = MutableStateFlow(false)
     val shelfLoading: StateFlow<Boolean> = _shelfLoading.asStateFlow()
+
+    /** Separate from [_shelfLoading]: building a queue must not cancel the shelf spinner. */
+    private val _queueBuilding = MutableStateFlow(false)
+    val queueBuilding: StateFlow<Boolean> = _queueBuilding.asStateFlow()
+
+    /**
+     * Ids the server says have been played, probed deep (500 each) rather than relying on
+     * the Home rails' 20 — otherwise "rarely played" means "not in your last 20", which
+     * on a big library is almost everything and the crate stops meaning anything.
+     */
+    private val _playedIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _recentIds = MutableStateFlow<Set<String>>(emptySet())
 
     fun loadShelf(force: Boolean = false) = viewModelScope.launch {
         if (_shelfLoading.value) return@launch
@@ -1375,7 +1398,16 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
                 if (page.size < SHELF_PAGE) break
                 offset += SHELF_PAGE
             }
-            _shelf.value = out + localAlbums()
+            // A rescan between pages can hand us the same album twice; a duplicate key
+            // is a hard crash in the crate grid.
+            _shelf.value = (out + localAlbums()).distinctBy { it.id }
+
+            val recent = Subsonic.api?.getAlbumList2("recent", PLAYED_PROBE)
+                ?.response?.albumList2?.album ?: emptyList()
+            val frequent = Subsonic.api?.getAlbumList2("frequent", PLAYED_PROBE)
+                ?.response?.albumList2?.album ?: emptyList()
+            _recentIds.value = recent.map { it.id }.toSet()
+            _playedIds.value = _recentIds.value + frequent.map { it.id }.toSet()
         } catch (e: Exception) {
             _error.value = e.message ?: "Could not read your library"
         } finally { _shelfLoading.value = false }
@@ -1383,18 +1415,17 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Albums he owns but has never pressed play on. Navidrome reports playCount, which
-     * makes this exact; on a server that doesn't, we fall back to "not among the most
-     * played and not played recently" — approximate, so the UI calls it "rarely played".
+     * makes this exact; on a server that doesn't, we fall back to the played probe —
+     * approximate, so the UI calls it "rarely played".
+     *
+     * Device albums carry no playCount at all, so in the exact branch they're matched on
+     * `== 0`, not `?: 0` — otherwise every song on the phone reads as never played.
      */
     val neverPlayed: StateFlow<List<Album>> =
-        combine(_shelf, _frequent, _recent) { shelf, frequent, recent ->
+        combine(_shelf, _playedIds) { shelf, played ->
             if (shelf.isEmpty()) return@combine emptyList()
-            if (shelf.any { it.playCount != null }) {
-                shelf.filter { (it.playCount ?: 0) == 0 }
-            } else {
-                val played = (frequent.map { it.id } + recent.map { it.id }).toSet()
-                shelf.filter { it.id !in played }
-            }
+            if (shelf.any { it.playCount != null }) shelf.filter { it.playCount == 0 }
+            else shelf.filter { it.id !in played }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** True when the server gave us real play counts, so the UI can say "never" honestly. */
@@ -1404,8 +1435,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Starred once, not touched since — the ones worth an apology. */
     val forgottenFavourites: StateFlow<List<Album>> =
-        combine(_starredAlbums, _recent) { starred, recent ->
-            val fresh = recent.map { it.id }.toSet()
+        combine(_starredAlbums, _recentIds) { starred, fresh ->
             starred.filter { it.id !in fresh }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -1437,18 +1467,42 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun clearBlindPick() { _blindPick.value = null }
 
-    /** Everything on one shelf, queued in order. */
+    /**
+     * Everything on one shelf, queued. Fetched a few albums at a time — serially this is
+     * one round-trip per album and takes half a minute over a remote link — and one dead
+     * album drops itself instead of throwing away the other 59.
+     */
+    private suspend fun gatherSongsResilient(albums: List<Album>): List<Song> = coroutineScope {
+        albums.chunked(GATHER_PARALLELISM).flatMap { chunk ->
+            chunk.map { al ->
+                async {
+                    try {
+                        if (al.id.startsWith("localalbum-")) {
+                            val albumId = al.id.removePrefix("localalbum-")
+                            _localSongs.value.filter { it.albumId == albumId }
+                        } else Subsonic.api?.getAlbum(al.id)?.response?.album?.song ?: emptyList()
+                    } catch (_: Exception) { emptyList() }
+                }
+            }.awaitAll().flatten()
+        }
+    }
+
     fun playAlbums(albums: List<Album>, shuffle: Boolean) = viewModelScope.launch {
         if (albums.isEmpty()) return@launch
-        _shelfLoading.value = true
+        if (_queueBuilding.value) return@launch
+        _queueBuilding.value = true
         try {
-            val songs = gatherSongs(albums.take(CRATE_PLAY_MAX))
+            // Take AFTER shuffling: the shelf is alphabetical, so taking first would make
+            // "shuffle" always pick over the same 60 albums at the front of the alphabet.
+            val picked = if (shuffle) albums.shuffled().take(CRATE_PLAY_MAX)
+            else albums.take(CRATE_PLAY_MAX)
+            val songs = gatherSongsResilient(picked)
             if (songs.isEmpty()) { _toast.value = "Nothing playable on this shelf"; return@launch }
             if (shuffle) shufflePlay(songs) else playSongs(songs, 0)
             _toast.value = "Playing ${songs.size} tracks"
         } catch (e: Exception) {
             _error.value = e.message ?: "Could not build a queue from this shelf"
-        } finally { _shelfLoading.value = false }
+        } finally { _queueBuilding.value = false }
     }
 
     fun shuffleLibrary() = viewModelScope.launch {

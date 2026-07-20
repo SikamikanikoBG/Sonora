@@ -1,5 +1,6 @@
 package com.sikamikaniko.sonora.ui
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,11 +27,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Grass
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -45,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -147,12 +147,16 @@ fun DiscoverScreen(vm: SonoraViewModel, nav: NavController) {
                     ) {
                         genres.take(24).forEach { g ->
                             val name = g.value ?: return@forEach
-                            CrateChip(name, g.albumCount ?: 0) { nav.navigate("genre/$name") }
+                            // Encode: genres like "Hip Hop/Rap" or "R&B" would break the route.
+                            CrateChip(name, g.albumCount ?: 0) { nav.navigate("genre/${Uri.encode(name)}") }
                         }
                     }
                 }
             }
 
+            // Only once the shelf is in: otherwise the crates advertise "0 albums" next to
+            // a "Reading the shelves…" spinner, and tap into empty screens.
+            if (shelf.isNotEmpty()) {
             item { SectionHeader("Crates") }
             item {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -188,6 +192,7 @@ fun DiscoverScreen(vm: SonoraViewModel, nav: NavController) {
                     ) { nav.navigate("crate/all") }
                 }
             }
+            }
             item { Spacer(Modifier.height(28.dp)) }
         }
     }
@@ -199,6 +204,7 @@ fun DiscoverScreen(vm: SonoraViewModel, nav: NavController) {
 fun CrateScreen(vm: SonoraViewModel, key: String, nav: NavController) {
     val shelf by vm.shelf.collectAsState()
     val loading by vm.shelfLoading.collectAsState()
+    val building by vm.queueBuilding.collectAsState()
     val decades by vm.decades.collectAsState()
     val unplayed by vm.neverPlayed.collectAsState()
     val exact by vm.playCountsExact.collectAsState()
@@ -219,8 +225,16 @@ fun CrateScreen(vm: SonoraViewModel, key: String, nav: NavController) {
         key == "forgotten" -> "Forgotten favourites"
         else -> "Everything"
     }
-    val tracks = albums.sumOf { it.songCount ?: 0 }
-    val unplayedHere = if (key == "unplayed") albums.size else albums.count { a -> unplayed.any { it.id == a.id } }
+    val tracks = remember(albums) { albums.sumOf { it.songCount ?: 0 } }
+    // Hoisted and set-based: inline `albums.count { unplayed.any { … } }` is an n×m scan
+    // on the main thread, re-run on every recomposition — visible jank while scrolling.
+    val unplayedHere = remember(albums, unplayed) {
+        if (key == "unplayed") albums.size
+        else {
+            val ids = unplayed.mapTo(HashSet(unplayed.size)) { it.id }
+            albums.count { it.id in ids }
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
@@ -258,11 +272,13 @@ fun CrateScreen(vm: SonoraViewModel, key: String, nav: NavController) {
                     )
                     Spacer(Modifier.height(10.dp))
                     PlayAllHeader(
-                        if (albums.size > 60) "First 60" else "Play the crate",
+                        if (albums.size > SonoraViewModel.CRATE_PLAY_MAX)
+                            "Play ${SonoraViewModel.CRATE_PLAY_MAX} of ${albums.size}"
+                        else "Play the crate",
                         onPlay = { vm.playAlbums(albums, false) },
                         onShuffle = { vm.playAlbums(albums, true) }
                     )
-                    if (loading) {
+                    if (building) {
                         Spacer(Modifier.height(6.dp))
                         Text(
                             "Building the queue…",
@@ -452,7 +468,7 @@ fun DiscoverStorefront(vm: SonoraViewModel, nav: NavController) {
     val pick by vm.tonightsPick.collectAsState()
     val unplayed by vm.neverPlayed.collectAsState()
     val exact by vm.playCountsExact.collectAsState()
-    val decades by vm.decades.collectAsState()
+    val forgotten by vm.forgottenFavourites.collectAsState()
     val shelf by vm.shelf.collectAsState()
 
     LaunchedEffect(Unit) { vm.loadShelf() }
@@ -488,12 +504,13 @@ fun DiscoverStorefront(vm: SonoraViewModel, nav: NavController) {
                 line = "${unplayed.size} albums",
                 modifier = Modifier.weight(1f)
             ) { nav.navigate("crate/unplayed") }
+            // Its own destination, not another door to the shop — "Open shop" is right above.
             CrateCard(
-                icon = Icons.Filled.History,
-                title = "Decades",
-                line = "${decades.size} shelves",
+                icon = Icons.Filled.Star,
+                title = "Forgotten",
+                line = "${forgotten.size} starred",
                 modifier = Modifier.weight(1f)
-            ) { nav.navigate("discover") }
+            ) { nav.navigate("crate/forgotten") }
             CrateCard(
                 icon = Icons.Filled.Casino,
                 title = "Blind pick",
