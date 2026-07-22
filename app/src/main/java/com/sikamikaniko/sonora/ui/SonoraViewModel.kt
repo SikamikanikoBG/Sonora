@@ -916,17 +916,23 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // Which lyric tool produced _aiText — the translate view styles line pairs differently.
+    private val _aiLyricsMode = MutableStateFlow<String?>(null)
+    val aiLyricsMode: StateFlow<String?> = _aiLyricsMode.asStateFlow()
+
     /** AI on lyrics: mode = "translate" or "explain" (streaming). */
     fun aiLyrics(mode: String) {
         if (!aiReady) { stopAiStream(); _aiText.value = "Set up AI in Settings first."; return }
         val lyr = _lyrics.value
         if (lyr.isNullOrBlank()) { stopAiStream(); _aiText.value = "No lyrics to work with yet."; return }
+        _aiLyricsMode.value = mode
         launchAiStream {
             val prompt = if (mode == "translate")
-                "Translate these song lyrics into ${_aiLang.value}, bilingually: repeat each original line, " +
-                    "then put its ${_aiLang.value} translation on the very next line. Keep stanza breaks " +
-                    "(blank lines) where the original has them. If a line is already in ${_aiLang.value}, " +
-                    "still show it once as original and once as translation. Output only the lyrics, " +
+                "Translate these song lyrics into ${_aiLang.value}, bilingually: repeat each original line " +
+                    "unchanged, then on the very next line put its ${_aiLang.value} translation, prefixed " +
+                    "with \"» \" (right guillemet and a space). Every translated line MUST start with \"» \"; " +
+                    "original lines must not. Keep stanza breaks (blank lines) where the original has them. " +
+                    "If a line is already in ${_aiLang.value}, still show both. Output only the lyrics, " +
                     "no commentary.\n\n$lyr"
             else
                 "In a short paragraph, explain the meaning and themes of these song lyrics. Plain text.\n\n$lyr"

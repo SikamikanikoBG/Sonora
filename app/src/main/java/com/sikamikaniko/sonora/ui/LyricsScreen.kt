@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -34,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -81,8 +84,11 @@ fun LyricsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
 
             when {
                 showAi -> {
+                    val aiMode by vm.aiLyricsMode.collectAsState()
                     if (aiText.isBlank()) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Thinking…", color = MaterialTheme.colorScheme.primary) }
+                    } else if (aiMode == "translate") {
+                        BilingualLyrics(aiText)
                     } else {
                         MarkdownText(aiText, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp))
                     }
@@ -121,6 +127,36 @@ fun SyncedLyrics(vm: SonoraViewModel, lines: List<Pair<Long, String>>, userScrol
                 modifier = Modifier.fillMaxWidth().clickable { vm.seekTo(line.first) }.padding(vertical = 7.dp)
             )
         }
+    }
+}
+
+/**
+ * Bilingual translation view: originals in the normal text colour, translated lines
+ * (the model prefixes them with "»") in the theme's accent colour and italic, with
+ * each original+translation pair grouped tighter than the gap to the next pair.
+ */
+@Composable
+private fun BilingualLyrics(text: String) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 20.dp)) {
+        text.lineSequence().forEach { raw ->
+            val line = raw.trim()
+            when {
+                line.isEmpty() -> Spacer(Modifier.height(18.dp))
+                line.startsWith("»") || line.startsWith("> »") -> Text(
+                    line.removePrefix("> ").removePrefix("»").trim(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontStyle = FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 10.dp)
+                )
+                else -> Text(
+                    line,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
