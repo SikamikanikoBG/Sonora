@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -56,10 +58,12 @@ import com.sikamikaniko.sonora.data.RadioBrowser
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistsScreen(vm: SonoraViewModel, nav: NavController) {
-    // Always refresh the playlist list on entry so a just-saved playlist shows up.
-    LaunchedEffect(Unit) { vm.loadPlaylists() }
+    // Always refresh on entry so a just-saved playlist or a just-starred song shows up.
+    LaunchedEffect(Unit) { vm.loadPlaylists(); vm.loadStarred() }
     val playlists by vm.playlists.collectAsState()
     val favStations by vm.favStations.collectAsState()
+    val starredSongs by vm.starredSongs.collectAsState()
+    val starredAlbums by vm.starredAlbums.collectAsState()
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
@@ -70,14 +74,36 @@ fun PlaylistsScreen(vm: SonoraViewModel, nav: NavController) {
             )
         )
 
-        if (playlists.isEmpty() && favStations.isEmpty()) {
+        if (playlists.isEmpty() && favStations.isEmpty() && starredSongs.isEmpty() && starredAlbums.isEmpty()) {
             CenterMessage(
-                "Nothing saved yet.\n\nFreeze an AI mix or your queue into a playlist, and tap the ♥ on any radio station — they'll all live here."
+                "Nothing saved yet.\n\nTap the ♥ on any song, album or radio station, or freeze an AI mix into a playlist — they'll all live here."
             )
             return@Column
         }
 
         LazyColumn(Modifier.fillMaxSize()) {
+            // ---- Favourite songs & albums (the ♥ lives here, as every toast promises) ----
+            if (starredAlbums.isNotEmpty()) {
+                item { SectionHeader("Favourite albums") }
+                item {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        items(starredAlbums, key = { "sa_" + it.id }) { album -> AlbumRailItem(vm, nav, album) }
+                    }
+                }
+            }
+            if (starredSongs.isNotEmpty()) {
+                item {
+                    PlayAllHeader(
+                        "Favourite songs",
+                        onPlay = { vm.playSongs(starredSongs, 0) },
+                        onShuffle = { vm.shufflePlay(starredSongs) }
+                    )
+                }
+                itemsIndexed(starredSongs, key = { _, s -> "ss_" + s.id }) { index, song ->
+                    SongItem(vm, nav, song, starredSongs, index, showIndex = false)
+                }
+            }
+
             // ---- Playlists ----
             item { SectionHeader("Playlists") }
             if (playlists.isEmpty()) {

@@ -26,8 +26,21 @@ data class SubsonicResponse(
     val starred2: Starred2?,
     val genres: Genres?,
     val songsByGenre: SongsByGenre? = null,
-    val lyrics: Lyrics? = null
+    val lyrics: Lyrics? = null,
+    val lyricsList: LyricsList? = null
 )
+
+// OpenSubsonic getLyricsBySongId — structured (optionally time-synced) lyrics
+// from the file's embedded tags or a sidecar .lrc, served by song id so it
+// never depends on artist/title string matching.
+data class LyricsList(val structuredLyrics: List<StructuredLyrics>? = null)
+data class StructuredLyrics(
+    val lang: String? = null,
+    val synced: Boolean? = null,
+    val offset: Long? = null,
+    val line: List<LyricLine>? = null
+)
+data class LyricLine(val start: Long? = null, val value: String? = null)
 
 data class SongsByGenre(val song: List<Song>? = null)
 

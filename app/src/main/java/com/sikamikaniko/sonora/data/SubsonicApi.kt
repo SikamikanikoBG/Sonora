@@ -45,6 +45,9 @@ interface SubsonicApi {
         @Query("title") title: String?
     ): SubsonicEnvelope
 
+    @GET("getLyricsBySongId.view")
+    suspend fun getLyricsBySongId(@Query("id") id: String): SubsonicEnvelope
+
     @GET("getAlbum.view")
     suspend fun getAlbum(@Query("id") id: String): SubsonicEnvelope
 

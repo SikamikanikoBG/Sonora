@@ -73,6 +73,15 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.sikamikaniko.sonora.BuildConfig
 
+/** Targets for bilingual lyric translation — the everyday picks first, the rest A→Z. */
+private val TRANSLATE_LANGUAGES = listOf(
+    "Bulgarian", "English",
+    "Arabic", "Chinese", "Croatian", "Czech", "Danish", "Dutch", "Finnish", "French",
+    "German", "Greek", "Hebrew", "Hindi", "Hungarian", "Indonesian", "Italian",
+    "Japanese", "Korean", "Norwegian", "Polish", "Portuguese", "Romanian", "Russian",
+    "Serbian", "Spanish", "Swedish", "Thai", "Turkish", "Ukrainian", "Vietnamese"
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
@@ -194,12 +203,24 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                androidx.compose.material3.OutlinedTextField(
-                    value = aiLang,
-                    onValueChange = { vm.setAiLang(it) },
-                    label = { Text("Translate lyrics to") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                var langMenu by remember { mutableStateOf(false) }
+                Box {
+                    OutlinedButton(onClick = { langMenu = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Translate lyrics to: $aiLang")
+                    }
+                    androidx.compose.material3.DropdownMenu(expanded = langMenu, onDismissRequest = { langMenu = false }) {
+                        TRANSLATE_LANGUAGES.forEach { lang ->
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text(lang) },
+                                onClick = { vm.setAiLang(lang); langMenu = false }
+                            )
+                        }
+                    }
+                }
+                Text(
+                    "Lyrics translate bilingually — every original line with its translation under it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(

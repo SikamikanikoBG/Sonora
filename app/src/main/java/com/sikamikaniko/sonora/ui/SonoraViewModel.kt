@@ -253,10 +253,11 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun openInsights(title: String?, artist: String?, album: String?) {
         _insightTarget.value = InsightTarget(title, artist, album)
         _aiText.value = ""
+        _insightWiki.value = null
         aiInsights(if (!title.isNullOrBlank()) "song" else if (!album.isNullOrBlank()) "album" else "artist")
     }
     fun openInsightsCurrent() = openInsights(_title.value, _artist.value, _albumTitle.value)
-    fun closeInsights() { _insightTarget.value = null; stopAiStream(); _aiText.value = "" }
+    fun closeInsights() { _insightTarget.value = null; stopAiStream(); _aiText.value = ""; _insightWiki.value = null }
 
     // ---- Local device library ----
     private val _localSongs = MutableStateFlow<List<Song>>(emptyList())
@@ -663,6 +664,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     // Per-song/topic cache of AI insights so re-opening the same analysis is instant.
     private val insightCache = HashMap<String, String>()
+    // The Wikipedia article that grounded the current insight — photo + facts for the UI.
+    private val wikiCache = HashMap<String, Wikipedia.Page?>()
+    private val _insightWiki = MutableStateFlow<Wikipedia.Page?>(null)
+    val insightWiki: StateFlow<Wikipedia.Page?> = _insightWiki.asStateFlow()
     private val _lastInsightTopic = MutableStateFlow("song")
     val lastInsightTopic: StateFlow<String> = _lastInsightTopic.asStateFlow()
     /** Re-run the last insight, bypassing the cache. */
@@ -670,7 +675,6 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     /** AI insights about the current music. topic = song | album | artist | era | songwriter. */
     fun aiInsights(topic: String = "song", force: Boolean = false) {
-        if (!aiReady) { stopAiStream(); _aiText.value = "Set up AI in Settings first."; return }
         _lastInsightTopic.value = topic
         val tgt = _insightTarget.value
         val t = tgt?.title ?: _title.value ?: ""
@@ -684,11 +688,6 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             "era" -> "era|$ar|$al"
             else -> "$topic|$t|$ar|$al"
         }.lowercase()
-        if (!force) {
-            insightCache[cacheKey]?.let { stopAiStream(); _aiText.value = it; return }
-        }
-        launchAiStream {
-        // Retrieval-augmented grounding: pull real facts from Wikipedia first.
         val wikiQuery = when (topic) {
             "album" -> "$al album $ar"
             "artist" -> "$ar band musician"
@@ -696,7 +695,27 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             "era" -> "$ar $al"
             else -> "$t song $ar"
         }
-        val reference = Wikipedia.lookup(wikiQuery)
+        suspend fun wikiPage(): Wikipedia.Page? =
+            if (wikiCache.containsKey(cacheKey)) wikiCache[cacheKey]
+            else Wikipedia.lookupPage(wikiQuery).also { wikiCache[cacheKey] = it }
+        if (!aiReady) {
+            // No AI configured — the Wikipedia photo + facts still make an About page.
+            stopAiStream(); _aiText.value = "Set up AI in Settings first."
+            viewModelScope.launch { _insightWiki.value = wikiPage() }
+            return
+        }
+        if (!force) {
+            insightCache[cacheKey]?.let {
+                stopAiStream(); _aiText.value = it
+                _insightWiki.value = wikiCache[cacheKey]
+                return
+            }
+        }
+        launchAiStream {
+        // Retrieval-augmented grounding: pull real facts from Wikipedia first.
+        val page = wikiPage()
+        _insightWiki.value = page
+        val reference = page?.extract
         val sys = "You are a sharp, friendly music writer. 3-4 sentences, plain text, no markdown. " +
             "Favour interesting connections (samples, influences, who-inspired-whom, cultural context) over dry facts. " +
             (if (reference != null) "Base your answer on the REFERENCE facts below and do NOT contradict or go beyond them. " +
@@ -904,7 +923,11 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (lyr.isNullOrBlank()) { stopAiStream(); _aiText.value = "No lyrics to work with yet."; return }
         launchAiStream {
             val prompt = if (mode == "translate")
-                "Translate these song lyrics to ${_aiLang.value}. Keep the line breaks. Output only the translation.\n\n$lyr"
+                "Translate these song lyrics into ${_aiLang.value}, bilingually: repeat each original line, " +
+                    "then put its ${_aiLang.value} translation on the very next line. Keep stanza breaks " +
+                    "(blank lines) where the original has them. If a line is already in ${_aiLang.value}, " +
+                    "still show it once as original and once as translation. Output only the lyrics, " +
+                    "no commentary.\n\n$lyr"
             else
                 "In a short paragraph, explain the meaning and themes of these song lyrics. Plain text.\n\n$lyr"
             val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("user", prompt))) { tok ->
@@ -1418,13 +1441,16 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
      * makes this exact; on a server that doesn't, we fall back to the played probe —
      * approximate, so the UI calls it "rarely played".
      *
-     * Device albums carry no playCount at all, so in the exact branch they're matched on
-     * `== 0`, not `?: 0` — otherwise every song on the phone reads as never played.
+     * Navidrome omits playCount entirely (null) for albums never played — the very albums
+     * this crate is for — so the exact branch must read null as zero. Device albums also
+     * carry no playCount, and null-as-zero would flag every one of them; they're excluded
+     * from the exact branch instead.
      */
     val neverPlayed: StateFlow<List<Album>> =
         combine(_shelf, _playedIds) { shelf, played ->
             if (shelf.isEmpty()) return@combine emptyList()
-            if (shelf.any { it.playCount != null }) shelf.filter { it.playCount == 0 }
+            if (shelf.any { it.playCount != null })
+                shelf.filter { !it.id.startsWith("localalbum-") && (it.playCount ?: 0) == 0 }
             else shelf.filter { it.id !in played }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -1433,10 +1459,24 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _shelf.map { s -> s.any { it.playCount != null } }
             .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    /** Starred once, not touched since — the ones worth an apology. */
+    /**
+     * Starred once, not touched since — the ones worth an apology. People star songs far
+     * more often than whole albums, so the albums those starred songs live on count too;
+     * only relying on starred *albums* left this crate permanently empty.
+     */
     val forgottenFavourites: StateFlow<List<Album>> =
-        combine(_starredAlbums, _recentIds) { starred, fresh ->
-            starred.filter { it.id !in fresh }
+        combine(_starredAlbums, _starredSongs, _recentIds) { starred, songs, fresh ->
+            val fromSongs = songs.asSequence()
+                .filter { it.localUri == null && !it.albumId.isNullOrBlank() }
+                .groupBy { it.albumId!! }
+                .map { (albumId, group) ->
+                    val f = group.first()
+                    Album(
+                        id = albumId, name = f.album, artist = f.artist, artistId = f.artistId,
+                        coverArt = f.coverArt, year = f.year, genre = f.genre
+                    )
+                }
+            (starred + fromSongs).distinctBy { it.id }.filter { it.id !in fresh }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Decade -> albums, newest decade first. Albums with no year are left out. */
@@ -1878,8 +1918,30 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         return "${_artist.value ?: ""}|$t".lowercase()
     }
 
-    /** Fetch lyrics for the current track (server first, then lrclib) — returns null if none. */
+    /**
+     * Fetch lyrics for the current track — returns null fields if none. Order:
+     * OpenSubsonic by-id (embedded/.lrc, immune to tag-string mismatches), then the
+     * legacy artist+title endpoint, then lrclib.
+     */
     private suspend fun fetchLyrics(): CachedLyrics {
+        val songId = _currentMediaId.value
+            ?.takeIf { !it.startsWith("local:") && !it.startsWith("radio:") }
+        if (songId != null) {
+            try {
+                val structured = Subsonic.api?.getLyricsBySongId(songId)
+                    ?.response?.lyricsList?.structuredLyrics
+                val best = structured?.firstOrNull { it.synced == true && !it.line.isNullOrEmpty() }
+                    ?: structured?.firstOrNull { !it.line.isNullOrEmpty() }
+                if (best != null) {
+                    val lines = best.line!!.mapNotNull { l -> l.value?.let { (l.start ?: 0L) to it } }
+                    val plain = lines.joinToString("\n") { it.second }.trim()
+                    if (plain.isNotBlank()) {
+                        val synced = lines.takeIf { best.synced == true && it.size > 1 }
+                        return CachedLyrics(plain, synced)
+                    }
+                }
+            } catch (_: Exception) { }
+        }
         var text = try {
             Subsonic.api?.getLyrics(_artist.value, _title.value)?.response?.lyrics?.value
         } catch (_: Exception) { null }
@@ -1892,13 +1954,20 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         return CachedLyrics(text, synced)
     }
 
+    /** Only real lyrics are worth remembering — a miss may be a network blip, retry later. */
+    private fun cacheIfFound(key: String?, result: CachedLyrics) {
+        if (key != null && (!result.plain.isNullOrBlank() || result.synced != null)) {
+            lyricsCache[key] = result
+        }
+    }
+
     /** Warm the cache in the background the moment a track starts, so the screen is instant. */
     private fun prefetchLyrics() {
         val key = lyricsKey() ?: return
         if (lyricsCache.containsKey(key)) return
         viewModelScope.launch {
             if (lyricsCache.containsKey(key)) return@launch
-            lyricsCache[key] = fetchLyrics()
+            cacheIfFound(key, fetchLyrics())
         }
     }
 
@@ -1915,7 +1984,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _lyricsLoading.value = true
         _syncedLyrics.value = null
         val result = fetchLyrics()
-        if (key != null) lyricsCache[key] = result
+        cacheIfFound(key, result)
         _lyrics.value = result.plain
         _syncedLyrics.value = result.synced
         _lyricsLoading.value = false

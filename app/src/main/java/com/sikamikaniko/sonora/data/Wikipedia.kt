@@ -20,17 +20,37 @@ object Wikipedia {
         .build()
     private const val UA = "Sonora/1.6 (https://github.com/SikamikanikoBG/Sonora)"
 
+    /** A matched article: intro text plus the lead photo and canonical link. */
+    data class Page(
+        val title: String?,
+        val extract: String,
+        val imageUrl: String? = null,
+        val pageUrl: String? = null
+    )
+
     /** Best-matching article intro (plain text, ~1500 chars) for the query, or null. */
-    suspend fun lookup(query: String): String? = withContext(Dispatchers.IO) {
+    suspend fun lookup(query: String): String? = lookupPage(query)?.extract
+
+    /** Full lookup: intro extract + lead image + page URL, or null when nothing matches. */
+    suspend fun lookupPage(query: String): Page? = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext null
         try {
             val url = "https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search" +
-                "&gsrsearch=${enc(query)}&gsrlimit=1&prop=extracts&exintro=1&explaintext=1&redirects=1&exchars=1600"
+                "&gsrsearch=${enc(query)}&gsrlimit=1&redirects=1" +
+                "&prop=extracts%7Cpageimages%7Cinfo&exintro=1&explaintext=1&exchars=1600" +
+                "&piprop=thumbnail&pithumbsize=800&inprop=url"
             val body = request(url) ?: return@withContext null
             val pages = JsonParser.parseString(body).asJsonObject
                 .getAsJsonObject("query")?.getAsJsonObject("pages") ?: return@withContext null
             val entry = pages.entrySet().firstOrNull()?.value?.asJsonObject ?: return@withContext null
-            entry.get("extract")?.asString?.trim()?.takeIf { it.isNotBlank() }
+            val extract = entry.get("extract")?.asString?.trim()?.takeIf { it.isNotBlank() }
+                ?: return@withContext null
+            Page(
+                title = entry.get("title")?.asString,
+                extract = extract,
+                imageUrl = entry.getAsJsonObject("thumbnail")?.get("source")?.asString,
+                pageUrl = entry.get("fullurl")?.asString
+            )
         } catch (e: Exception) {
             null
         }

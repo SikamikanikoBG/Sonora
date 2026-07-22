@@ -40,6 +40,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 
@@ -57,6 +59,8 @@ fun InsightsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
     val text by vm.aiText.collectAsState()
     val streaming by vm.aiStreaming.collectAsState()
     val target by vm.insightTarget.collectAsState()
+    val wiki by vm.insightWiki.collectAsState()
+    val uriHandler = LocalUriHandler.current
     val heading = target?.title ?: target?.artist ?: target?.album ?: "this music"
     var ask by remember { mutableStateOf("") }
 
@@ -94,9 +98,28 @@ fun InsightsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Thinking…", color = MaterialTheme.colorScheme.primary) }
                 } else {
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
+                        wiki?.imageUrl?.let { img ->
+                            UrlArt(img, Modifier.fillMaxWidth().height(230.dp), corner = 16.dp)
+                            Spacer(Modifier.height(16.dp))
+                        }
                         MarkdownText(text.ifBlank { "Pick a topic above, or ask anything below." }, style = MaterialTheme.typography.bodyLarge)
                         Spacer(Modifier.height(16.dp))
                         Text("✨ AI-generated — may be imperfect.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        wiki?.let { w ->
+                            Spacer(Modifier.height(24.dp))
+                            Text("From Wikipedia", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(8.dp))
+                            Text(w.extract, style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Wikipedia: ${w.title ?: "article"} ↗",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.clickable {
+                                    w.pageUrl?.let { runCatching { uriHandler.openUri(it) } }
+                                }
+                            )
+                        }
                     }
                 }
             }

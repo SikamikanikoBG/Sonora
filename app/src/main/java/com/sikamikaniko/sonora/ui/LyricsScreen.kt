@@ -68,11 +68,12 @@ fun LyricsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
             )
 
             if (aiReady && !lyrics.isNullOrBlank()) {
+                val lang by vm.aiLang.collectAsState()
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
                 ) {
-                    Chip("Translate") { vm.aiLyrics("translate") }
+                    Chip("Translate → $lang") { vm.aiLyrics("translate") }
                     Chip("Explain") { vm.aiLyrics("explain") }
                     if (showAi) Chip("Show lyrics") { vm.clearAiText() }
                 }

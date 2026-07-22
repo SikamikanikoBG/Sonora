@@ -34,14 +34,26 @@ object OnlineLyrics {
         withContext(Dispatchers.IO) {
             if (artist.isNullOrBlank() || title.isNullOrBlank()) return@withContext null
             val a = artist.replace(Regex("(?i)\\s+feat\\.?.*$"), "").trim()
-            getLrc(title, a, null, 0)?.let { if (usable(it)) return@withContext it }
-            if (!album.isNullOrBlank() || durationSec > 0) {
-                getLrc(title, a, album, durationSec)?.let { if (usable(it)) return@withContext it }
+            // Rips often decorate titles ("Song (2008 Remaster)", "01 - Song"); lrclib
+            // indexes the bare name, so try the tag as-is first, then cleaned.
+            val titles = listOf(title, cleanTitle(title)).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            for (t in titles) {
+                getLrc(t, a, null, 0)?.let { if (usable(it)) return@withContext it }
+                if (!album.isNullOrBlank() || durationSec > 0) {
+                    getLrc(t, a, album, durationSec)?.let { if (usable(it)) return@withContext it }
+                }
+                searchLrc("track_name=${enc(t)}&artist_name=${enc(a)}", durationSec)?.let { return@withContext it }
             }
-            searchLrc("track_name=${enc(title)}&artist_name=${enc(a)}")?.let { return@withContext it }
-            searchLrc("q=${enc("$title $a")}")?.let { return@withContext it }
+            searchLrc("q=${enc("${titles.last()} $a")}", durationSec)?.let { return@withContext it }
             null
         }
+
+    /** Strip leading track numbers and trailing remaster/version decorations. */
+    private fun cleanTitle(raw: String): String = raw
+        .replace(Regex("^\\s*\\d{1,3}\\s*[-.]\\s*"), "")
+        .replace(Regex("(?i)\\s*[(\\[][^)\\]]*(remaster|remix|live|demo|edit|version|mono|stereo|deluxe)[^)\\]]*[)\\]]\\s*$"), "")
+        .replace(Regex("(?i)\\s*-\\s*(\\d{4}\\s+)?remaster(ed)?.*$"), "")
+        .trim()
 
     /** Plain lyrics only (convenience). */
     suspend fun fetch(artist: String?, title: String?, album: String?, durationSec: Int): String? =
@@ -81,12 +93,24 @@ object OnlineLyrics {
         return try { gson.fromJson(body, Lrc::class.java) } catch (_: Exception) { null }
     }
 
-    private fun searchLrc(queryParams: String): Lrc? {
+    private data class SearchHit(
+        val plainLyrics: String? = null,
+        val syncedLyrics: String? = null,
+        val instrumental: Boolean? = null,
+        val duration: Double? = null
+    )
+
+    /** Search, preferring the hit whose duration is closest to ours (album cuts over live takes). */
+    private fun searchLrc(queryParams: String, durationSec: Int): Lrc? {
         val body = request("https://lrclib.net/api/search?$queryParams") ?: return null
         return try {
-            JsonParser.parseString(body).asJsonArray
-                .map { gson.fromJson(it, Lrc::class.java) }
-                .firstOrNull { usable(it) }
+            val hits = JsonParser.parseString(body).asJsonArray
+                .map { gson.fromJson(it, SearchHit::class.java) }
+                .filter { usable(Lrc(it.plainLyrics, it.syncedLyrics, it.instrumental)) }
+            val pick = if (durationSec > 0)
+                hits.minByOrNull { kotlin.math.abs((it.duration ?: 1e9) - durationSec) }
+            else hits.firstOrNull()
+            pick?.let { Lrc(it.plainLyrics, it.syncedLyrics, it.instrumental) }
         } catch (_: Exception) { null }
     }
 
