@@ -100,10 +100,18 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
                         NavigationBarItem(
                             selected = route == tab.route,
                             onClick = {
+                                val before = nav.currentBackStackEntry?.id
                                 nav.navigate(tab.route) {
                                     popUpTo(nav.graph.findStartDestination().id) { saveState = true }
                                     launchSingleTop = true
                                     restoreState = true
+                                }
+                                // Flat graph: tapping the tab that owns the current deep stack
+                                // saves then instantly restores the identical stack (entry ids
+                                // survive the round-trip) — the button reads as dead. Detect
+                                // the no-op and surface the tab's root instead.
+                                if (route != tab.route && nav.currentBackStackEntry?.id == before) {
+                                    nav.popBackStack(tab.route, inclusive = false)
                                 }
                             },
                             icon = { Icon(tab.icon, tab.label) },
@@ -154,9 +162,9 @@ fun SonoraRoot(vm: SonoraViewModel = viewModel()) {
             onOpenQueue = { showQueue = true },
             onOpenLyrics = { showLyrics = true },
             onOpenInsights = { vm.openInsightsCurrent() },
-            onFindSimilar = { showPlayer = false; nav.navigate("similar") },
-            onGoToAlbum = { id -> showPlayer = false; nav.navigate("album/$id") },
-            onGoToArtist = { id -> showPlayer = false; nav.navigate("artist/$id") }
+            onFindSimilar = { showPlayer = false; nav.navigateDistinct("similar") },
+            onGoToAlbum = { id -> showPlayer = false; nav.navigateDistinct("album/$id") },
+            onGoToArtist = { id -> showPlayer = false; nav.navigateDistinct("artist/$id") }
         )
     }
     if (showQueue) {

@@ -30,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -80,6 +81,10 @@ fun SimilarSongsScreen(vm: SonoraViewModel, nav: NavController) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 6.dp)
                 )
+                TextButton(
+                    onClick = { vm.startSimilarRadio(); nav.popBackStack() },
+                    modifier = Modifier.padding(start = 8.dp)
+                ) { Text("▶  Start similar radio — keep this vibe going") }
             }
 
             when {

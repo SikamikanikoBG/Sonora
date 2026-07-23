@@ -292,7 +292,7 @@ fun AlbumItem(vm: SonoraViewModel, nav: NavController, album: Album) {
     val selected = selectedAlbums.any { it.id == album.id }
     AlbumGridCard(
         album, selected, active,
-        onClick = { if (active) vm.toggleAlbumSelection(album) else nav.navigate("album/${album.id}") },
+        onClick = { if (active) vm.toggleAlbumSelection(album) else nav.navigateDistinct("album/${album.id}") },
         onLongClick = { vm.toggleAlbumSelection(album) }
     )
 }
@@ -305,7 +305,7 @@ fun AlbumRailItem(vm: SonoraViewModel, nav: NavController, album: Album) {
     val selected = selectedAlbums.any { it.id == album.id }
     AlbumRailCard(
         album, selected, active,
-        onClick = { if (active) vm.toggleAlbumSelection(album) else nav.navigate("album/${album.id}") },
+        onClick = { if (active) vm.toggleAlbumSelection(album) else nav.navigateDistinct("album/${album.id}") },
         onLongClick = { vm.toggleAlbumSelection(album) }
     )
 }
@@ -544,8 +544,8 @@ fun SongItem(
             onPlayNext = { vm.playNext(listOf(song)) },
             onAddToQueue = { vm.addToQueue(listOf(song)) },
             onAddToPlaylist = { vm.openPlaylistPicker(listOf(song)) },
-            onGoToArtist = song.artistId?.let { aid -> { nav.navigate("artist/$aid") } },
-            onGoToAlbum = song.albumId?.let { alid -> { nav.navigate("album/$alid") } },
+            onGoToArtist = song.artistId?.let { aid -> { nav.navigateDistinct("artist/$aid") } },
+            onGoToAlbum = song.albumId?.let { alid -> { nav.navigateDistinct("album/$alid") } },
             onToggleStar = { vm.toggleStar(song.id) },
             onAbout = { vm.openInsights(song.title, song.artist, song.album) },
             onInfo = { showInfo = true },

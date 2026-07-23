@@ -60,6 +60,7 @@ fun InsightsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
     val streaming by vm.aiStreaming.collectAsState()
     val target by vm.insightTarget.collectAsState()
     val wiki by vm.insightWiki.collectAsState()
+    val hero by vm.insightHero.collectAsState()
     val uriHandler = LocalUriHandler.current
     val heading = target?.title ?: target?.artist ?: target?.album ?: "this music"
     var ask by remember { mutableStateOf("") }
@@ -98,7 +99,7 @@ fun InsightsScreen(vm: SonoraViewModel, onBack: () -> Unit) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Thinking…", color = MaterialTheme.colorScheme.primary) }
                 } else {
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
-                        wiki?.imageUrl?.let { img ->
+                        (hero ?: wiki?.imageUrl)?.let { img ->
                             UrlArt(img, Modifier.fillMaxWidth().height(230.dp), corner = 16.dp)
                             Spacer(Modifier.height(16.dp))
                         }

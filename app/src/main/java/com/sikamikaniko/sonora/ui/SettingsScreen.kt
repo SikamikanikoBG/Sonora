@@ -241,6 +241,19 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                     androidx.compose.material3.Switch(checked = autoplay, onCheckedChange = { vm.setAutoplayOnStart(it) })
                 }
                 RowDivider()
+                val carKaraoke by vm.carKaraoke.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Car karaoke (experimental)")
+                        Text(
+                            "Show the current lyric line on your car's Bluetooth display (sent as the track title — the notification shows lyrics too while on)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    androidx.compose.material3.Switch(checked = carKaraoke, onCheckedChange = { vm.setCarKaraoke(it) })
+                }
+                RowDivider()
                 val btAutoplay by vm.btAutoplay.collectAsState()
                 // Android 12+ withholds the "device connected" broadcast unless
                 // BLUETOOTH_CONNECT is granted, so switching this on without asking for

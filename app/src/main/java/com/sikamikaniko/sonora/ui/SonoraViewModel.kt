@@ -27,6 +27,7 @@ import com.sikamikaniko.sonora.data.AlbumWithSongs
 import com.sikamikaniko.sonora.data.ArtPalette
 import com.sikamikaniko.sonora.data.Artist
 import com.sikamikaniko.sonora.data.ArtistWithAlbums
+import com.sikamikaniko.sonora.data.Deezer
 import com.sikamikaniko.sonora.data.Genre
 import com.sikamikaniko.sonora.data.LocalMedia
 import com.sikamikaniko.sonora.data.NetworkMonitor
@@ -254,10 +255,14 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _insightTarget.value = InsightTarget(title, artist, album)
         _aiText.value = ""
         _insightWiki.value = null
+        _insightHero.value = null
         aiInsights(if (!title.isNullOrBlank()) "song" else if (!album.isNullOrBlank()) "album" else "artist")
     }
     fun openInsightsCurrent() = openInsights(_title.value, _artist.value, _albumTitle.value)
-    fun closeInsights() { _insightTarget.value = null; stopAiStream(); _aiText.value = ""; _insightWiki.value = null }
+    fun closeInsights() {
+        _insightTarget.value = null; stopAiStream(); _aiText.value = ""
+        _insightWiki.value = null; _insightHero.value = null
+    }
 
     // ---- Local device library ----
     private val _localSongs = MutableStateFlow<List<Song>>(emptyList())
@@ -423,9 +428,15 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             } catch (_: Exception) { emptyList() }
         }
         if (lib.isEmpty()) return emptyList()
-        // Cap so the whole list fits the model context; number the entries so even
-        // small models only have to return short integers (robust across models).
-        val capped = if (lib.size > 200) lib.shuffled().take(200) else lib
+        // Prefilter by prompt-token hits, then cap hard: small models pick reliably from
+        // ~20-40 numbered entries and collapse on 200 (mid-list items just vanish).
+        val tokens = prompt.lowercase().split(Regex("\\W+")).filter { it.length >= 3 }
+        val scored = lib.map { a ->
+            val hay = "${a.artist ?: ""} ${a.name ?: ""} ${a.genre ?: ""}".lowercase()
+            a to tokens.count { hay.contains(it) }
+        }
+        val hits = scored.filter { it.second > 0 }.sortedByDescending { it.second }.map { it.first }
+        val capped = (hits.take(30) + lib.shuffled()).distinctBy { it.id }.take(40)
         val numbered = capped.mapIndexed { i, a ->
             "${i + 1}. ${a.artist ?: "?"} — ${a.name ?: "?"}"
         }.joinToString("\n")
@@ -477,21 +488,23 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val genres: List<String> = emptyList(),
         val artists: List<String> = emptyList(),
         val decades: List<Int> = emptyList(),
-        val keywords: List<String> = emptyList(),
-        val energy: String? = null
+        val keywords: List<String> = emptyList()
     ) {
         val isEmpty get() = genres.isEmpty() && artists.isEmpty() && keywords.isEmpty()
     }
 
+    /** Album picks plus the query that produced them (aiDj orders tracks by its keywords). */
+    private data class DjSelection(val albums: List<Album>, val query: DjQuery)
+
     /** Top-level DJ album selection: intent-extraction → index retrieval → fallbacks. */
-    private suspend fun djSelectAlbums(prompt: String, count: Int): List<Album> {
+    private suspend fun djSelect(prompt: String, count: Int): DjSelection {
         val q = extractDjQuery(prompt)
         var albums = if (!q.isEmpty) retrieveAlbumsForQuery(q, count) else emptyList()
         // Structured retrieval found nothing (odd request / no genre match) → try the
         // classic numbered-pick on a sample, then finally a random handful.
         if (albums.isEmpty()) albums = pickAlbums(prompt, count)
         if (albums.isEmpty()) albums = fallbackRandomAlbums(count)
-        return albums
+        return DjSelection(albums, q)
     }
 
     /** Stage A — the model maps the request to a compact JSON filter (tiny context). */
@@ -505,8 +518,9 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         val vocabLine = if (vocab.isNotEmpty())
             "Available genres (pick ONLY from these where relevant): ${vocab.joinToString(", ")}\n\n" else ""
         val sys = "You translate a music request into a compact JSON filter for a library search. " +
-            "Reply ONLY with JSON: {\"genres\":[],\"artists\":[],\"decades\":[1990],\"keywords\":[],\"energy\":\"low|medium|high|any\"}. " +
-            "Choose genres ONLY from the provided list. decades are 4-digit (e.g. 1980). keywords are extra words to match on titles/artists. No prose."
+            "Reply ONLY with JSON: {\"genres\":[],\"artists\":[],\"decades\":[1990],\"keywords\":[]}. " +
+            "Choose genres ONLY from the provided list. decades are 4-digit (e.g. 1980). " +
+            "keywords are extra words to match on song/album titles (include song titles the request names). No prose."
         val json = AiClient.chat(
             _aiBaseUrl.value, _aiModel.value,
             listOf(AiClient.Msg("system", sys), AiClient.Msg("user", vocabLine + "Request: \"$prompt\"")),
@@ -533,26 +547,52 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
                     runCatching { el.asInt }.getOrNull()
                         ?: runCatching { el.asString }.getOrNull()?.let { Regex("\\d{4}").find(it)?.value?.toIntOrNull() }
                 }?.distinct() ?: emptyList()
-            DjQuery(genres, strList("artists"), decades, strList("keywords"),
-                runCatching { o.get("energy")?.asString?.trim() }.getOrNull())
+            DjQuery(genres, strList("artists"), decades, strList("keywords"))
         } catch (_: Exception) { DjQuery() }
     }
 
-    /** Stage B — deterministic retrieval against the server's genre/artist indexes + local library. */
+    /**
+     * Stage B — deterministic retrieval against the server's genre/artist indexes + local
+     * library, RANKED by how many of the query's facets each album matches (an album that
+     * hits genre+artist+decade must beat a stray keyword-only match).
+     */
     private suspend fun retrieveAlbumsForQuery(q: DjQuery, target: Int): List<Album> {
         val pool = LinkedHashMap<String, Album>()
-        fun addAll(al: List<Album>?) { al?.forEach { pool.putIfAbsent(it.id, it) } }
+        val score = HashMap<String, Int>()
+        fun addAll(al: List<Album>?, points: Int) {
+            al?.forEach {
+                pool.putIfAbsent(it.id, it)
+                score.merge(it.id, points, Int::plus)
+            }
+        }
 
         for (g in q.genres.take(6)) {
-            try { addAll(Subsonic.api?.getAlbumList2("byGenre", 40, 0, g)?.response?.albumList2?.album) } catch (_: Exception) {}
+            // 100-deep + shuffle: a 40-entry alphabetical slice biased every genre mix
+            // toward artists starting with "A".
+            try {
+                addAll(
+                    Subsonic.api?.getAlbumList2("byGenre", 100, 0, g)?.response?.albumList2?.album?.shuffled(),
+                    2
+                )
+            } catch (_: Exception) {}
         }
         for (a in q.artists.take(6)) {
             try {
                 val r = Subsonic.api?.search3(a, songCount = 0, albumCount = 20, artistCount = 5)?.response?.searchResult3
-                addAll(r?.album?.filter { it.artist?.contains(a, true) == true })
+                addAll(r?.album?.filter { it.artist?.contains(a, true) == true }, 3)
                 r?.artist?.firstOrNull { it.name?.contains(a, true) == true }?.id?.let { aid ->
-                    addAll(Subsonic.api?.getArtist(aid)?.response?.artist?.album)
+                    addAll(Subsonic.api?.getArtist(aid)?.response?.artist?.album, 3)
                 }
+            } catch (_: Exception) {}
+        }
+        // Song-level retrieval: a request naming a song or a lyric vibe finds the songs
+        // themselves, then their albums — album-name matching alone can't see them.
+        for (kw in q.keywords.take(4)) {
+            try {
+                val r = Subsonic.api?.search3(kw, songCount = 25, albumCount = 10)?.response?.searchResult3
+                addAll(r?.album, 2)
+                val albumIds = r?.song?.mapNotNull { it.albumId }?.toSet() ?: emptySet()
+                if (albumIds.isNotEmpty()) addAll(_albums.value.filter { it.id in albumIds }, 2)
             } catch (_: Exception) {}
         }
         // Keyword / genre-word match across the blended local list (also covers device music).
@@ -561,25 +601,25 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             addAll(_albums.value.filter { al ->
                 val hay = "${al.name ?: ""} ${al.artist ?: ""}".lowercase()
                 kws.any { hay.contains(it) }
-            })
+            }, 2)
         }
         // Device albums whose songs carry a matching genre tag.
         if (q.genres.isNotEmpty()) {
             val gset = q.genres.map { it.lowercase() }.toSet()
             val localIds = _localSongs.value.filter { it.genre?.lowercase() in gset }.mapNotNull { it.albumId }.toSet()
-            addAll(_albums.value.filter { it.id.removePrefix("localalbum-") in localIds && it.id.startsWith("localalbum-") })
+            addAll(_albums.value.filter { it.id.removePrefix("localalbum-") in localIds && it.id.startsWith("localalbum-") }, 2)
         }
 
-        var result = pool.values.toList()
-        // Prefer the requested decade(s) but don't hard-exclude everything else.
-        if (q.decades.isNotEmpty() && result.isNotEmpty()) {
-            fun inDecade(y: Int?) = y != null && q.decades.any { y >= it && y < it + 10 }
-            val (inDec, rest) = result.partition { inDecade(it.year) }
-            result = inDec.shuffled() + rest.shuffled()
-        } else {
-            result = result.shuffled()
+        fun inDecade(y: Int?) = y != null && q.decades.any { y >= it && y < it + 10 }
+        if (q.decades.isNotEmpty()) {
+            pool.keys.forEach { id -> if (inDecade(pool[id]?.year)) score.merge(id, 1, Int::plus) }
         }
-        return result.take(target)
+        // Shuffle THEN stable-sort: score ranking holds, but equal scores vary per call —
+        // a deterministic order made every radio top-up draw the same handful of albums.
+        return pool.values
+            .shuffled()
+            .sortedByDescending { score[it.id] ?: 0 }
+            .take(target)
     }
 
     private suspend fun fallbackRandomAlbums(count: Int): List<Album> {
@@ -614,10 +654,20 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _aiStatus.value = "Thinking…"
         _mixSongs.value = emptyList()
         try {
-            val albums = djSelectAlbums(prompt, 12)
+            val (albums, djQuery) = djSelect(prompt, 12)
             if (albums.isEmpty()) { _aiStatus.value = "Couldn't reach the AI, or no matches — check the AI settings & your connection."; return@launch }
             _aiStatus.value = "Gathering tracks…"
-            val songs = gatherSongs(albums).shuffled()
+            // Whole-album dumps in random order drown a correct pick in off-vibe deep
+            // cuts: tracks that literally match the request lead, and the queue is capped.
+            val gathered = gatherSongs(albums)
+            val kw = djQuery.keywords.map { it.lowercase() }.filter { it.length >= 3 }
+            val songs = if (kw.isNotEmpty()) {
+                val (hit, rest) = gathered.partition { s ->
+                    val hay = "${s.title ?: ""} ${s.artist ?: ""}".lowercase()
+                    kw.any { hay.contains(it) }
+                }
+                (hit.shuffled() + rest.shuffled()).take(60)
+            } else gathered.shuffled().take(60)
             if (songs.isEmpty()) { _aiStatus.value = "No playable tracks found"; return@launch }
             _mixSongs.value = songs
             _aiStatus.value = "Playing ${songs.size} tracks · ${albums.size} albums"
@@ -635,26 +685,58 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     val radio: StateFlow<Boolean> = _radio.asStateFlow()
     private var radioSeed: String? = null
     private var radioBusy = false
+    // Similar-radio seed (song-level, mood/genre/era-matched) — set = similar mode active.
+    private var similarSeedTitle: String? = null
+    private var similarSeedArtist: String? = null
 
-    fun setRadio(v: Boolean) { _radio.value = v; if (v) maybeExtendRadio() }
+    fun setRadio(v: Boolean) {
+        _radio.value = v
+        if (!v) { similarSeedTitle = null; similarSeedArtist = null }
+        else maybeExtendRadio()
+    }
     fun toggleRadio() = setRadio(!_radio.value)
     fun startRadioFromCurrent() {
+        similarSeedTitle = null; similarSeedArtist = null
         radioSeed = "${_artist.value ?: ""} — ${_title.value ?: ""}"
         setRadio(true)
     }
 
-    private fun maybeExtendRadio() {
+    /**
+     * Similar Radio: an endless queue matched to the vibe of the song playing right now.
+     * Song-level (genre/era/mood via the similar-songs pipeline), not the album-level DJ —
+     * and it keeps working without AI (deterministic prefilter picks) so it never dies mid-drive.
+     */
+    fun startSimilarRadio() {
+        val t = _title.value?.trim()?.takeIf { it.isNotBlank() }
+        if (t == null) { _toast.value = "Play a song first — similar radio follows what's on."; return }
+        similarSeedTitle = t
+        similarSeedArtist = _artist.value?.trim() ?: ""
+        radioSeed = "${similarSeedArtist} — $t"
+        _radio.value = true
+        _toast.value = "Similar radio on — keeping this vibe going"
+        maybeExtendRadio(force = true)
+    }
+    fun similarRadioActive() = _radio.value && similarSeedTitle != null
+
+    private fun maybeExtendRadio(force: Boolean = false) {
         val c = controller ?: return
-        if (!_radio.value || radioBusy || !aiReady) return
+        val similarMode = similarSeedTitle != null
+        if (!_radio.value || radioBusy) return
+        if (!similarMode && !aiReady) return // similar mode has a no-AI fallback
         val remaining = c.mediaItemCount - (c.currentMediaItemIndex + 1)
-        if (remaining > 3) return
+        if (!force && remaining > 3) return
         radioBusy = true
         viewModelScope.launch {
             try {
-                val seed = radioSeed ?: "${_artist.value ?: ""} ${_albumTitle.value ?: ""}"
-                val albums = djSelectAlbums("Music similar in style and mood to: $seed. Keep it varied.", 5)
-                val songs = gatherSongs(albums).shuffled().take(20)
-                if (songs.isNotEmpty()) addToQueue(songs)
+                if (similarMode) extendSimilarRadio()
+                else {
+                    val seed = radioSeed ?: "${_artist.value ?: ""} ${_albumTitle.value ?: ""}"
+                    val albums = djSelect("Music similar in style and mood to: $seed. Keep it varied.", 5).albums
+                    // Dedup against the queue or a long radio session replays the same albums.
+                    val queued = queuedIds()
+                    val songs = gatherSongs(albums).filter { it.id !in queued }.shuffled().take(20)
+                    if (songs.isNotEmpty()) addToQueue(songs)
+                }
             } catch (_: Exception) {
             } finally {
                 radioBusy = false
@@ -662,12 +744,51 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Top up the similar-radio queue: pool from the seed's genre/artist/era, AI-picked (or scored). */
+    private suspend fun extendSimilarRadio() {
+        val t = similarSeedTitle ?: return
+        val ar = similarSeedArtist ?: ""
+        val seedHit = resolveSeed(t, ar)
+        val genre = seedHit?.genre?.takeIf { it.isNotBlank() }
+        val year = seedHit?.year
+        val queued = queuedIds()
+        val fresh = buildSimilarPool(ar, genre, seedHit?.id).filter { it.id !in queued }
+        if (fresh.isEmpty()) return
+        val ctx = buildString {
+            append("\"$t\" by ${ar.ifBlank { "unknown artist" }}")
+            if (genre != null || year != null)
+                append(" (${listOfNotNull(genre, year?.let { "${it}s" }).joinToString(", ")})")
+            append(" — match its mood and energy")
+        }
+        val picks = if (aiReady) rankPool(ctx, ar, genre, year, fresh).mapNotNull { it.librarySong } else emptyList()
+        val songs = picks.ifEmpty { prefilterPool(ar, genre, year, fresh).take(12) }
+        if (songs.isNotEmpty()) addToQueue(songs)
+    }
+
+    private fun queuedIds(): Set<String> {
+        val c = controller ?: return emptySet()
+        return (0 until c.mediaItemCount).mapTo(HashSet()) { c.getMediaItemAt(it).mediaId }
+    }
+
     // Per-song/topic cache of AI insights so re-opening the same analysis is instant.
     private val insightCache = HashMap<String, String>()
     // The Wikipedia article that grounded the current insight — photo + facts for the UI.
-    private val wikiCache = HashMap<String, Wikipedia.Page?>()
+    private val wikiCache = HashMap<String, Wikipedia.Page>()
+    private val wikiFullCache = HashMap<String, String>()
     private val _insightWiki = MutableStateFlow<Wikipedia.Page?>(null)
     val insightWiki: StateFlow<Wikipedia.Page?> = _insightWiki.asStateFlow()
+    // Proper artist photo (Deezer press shot; Wikipedia thumbnails are license-filtered).
+    private val heroCache = HashMap<String, String>()
+    private val _insightHero = MutableStateFlow<String?>(null)
+    val insightHero: StateFlow<String?> = _insightHero.asStateFlow()
+
+    private suspend fun heroPhoto(artist: String): String? {
+        if (artist.isBlank()) return null
+        val key = artist.lowercase()
+        // Cache hits only — a timeout must not blank this artist's photo all session.
+        return heroCache[key] ?: Deezer.artist(artist)?.pictureUrl
+            .also { if (it != null) heroCache[key] = it }
+    }
     private val _lastInsightTopic = MutableStateFlow("song")
     val lastInsightTopic: StateFlow<String> = _lastInsightTopic.asStateFlow()
     /** Re-run the last insight, bypassing the cache. */
@@ -688,26 +809,33 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             "era" -> "era|$ar|$al"
             else -> "$topic|$t|$ar|$al"
         }.lowercase()
+        // Plain artist name ranks the band page first; "X band musician" famously returns
+        // Ron McGovney for Metallica and a 1960s UK band for Nirvana.
         val wikiQuery = when (topic) {
             "album" -> "$al album $ar"
-            "artist" -> "$ar band musician"
+            "artist" -> ar
             "songwriter" -> "$t song $ar"
             "era" -> "$ar $al"
             else -> "$t song $ar"
         }
+        // Never cache a miss: a 429/timeout would otherwise blank wiki until app restart.
         suspend fun wikiPage(): Wikipedia.Page? =
-            if (wikiCache.containsKey(cacheKey)) wikiCache[cacheKey]
-            else Wikipedia.lookupPage(wikiQuery).also { wikiCache[cacheKey] = it }
+            wikiCache[cacheKey] ?: Wikipedia.lookupPage(wikiQuery)
+                .also { if (it != null) wikiCache[cacheKey] = it }
         if (!aiReady) {
-            // No AI configured — the Wikipedia photo + facts still make an About page.
+            // No AI configured — the photo + Wikipedia facts still make an About page.
             stopAiStream(); _aiText.value = "Set up AI in Settings first."
-            viewModelScope.launch { _insightWiki.value = wikiPage() }
+            viewModelScope.launch {
+                _insightWiki.value = wikiPage()
+                _insightHero.value = heroPhoto(ar)
+            }
             return
         }
         if (!force) {
             insightCache[cacheKey]?.let {
                 stopAiStream(); _aiText.value = it
                 _insightWiki.value = wikiCache[cacheKey]
+                viewModelScope.launch { _insightHero.value = heroPhoto(ar) }
                 return
             }
         }
@@ -715,19 +843,33 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         // Retrieval-augmented grounding: pull real facts from Wikipedia first.
         val page = wikiPage()
         _insightWiki.value = page
-        val reference = page?.extract
-        val sys = "You are a sharp, friendly music writer. 3-4 sentences, plain text, no markdown. " +
-            "Favour interesting connections (samples, influences, who-inspired-whom, cultural context) over dry facts. " +
-            (if (reference != null) "Base your answer on the REFERENCE facts below and do NOT contradict or go beyond them. " +
-                "If a detail isn't in the reference and you're not certain, say it's not documented rather than guessing. "
+        _insightHero.value = heroPhoto(ar)
+        // The artist blurb deserves the whole article (members, history), not just the intro.
+        val fullRef = if (topic == "artist") {
+            wikiFullCache[cacheKey] ?: Wikipedia.lookupFull(wikiQuery)?.extract
+                ?.also { wikiFullCache[cacheKey] = it }
+        } else null
+        val reference = fullRef ?: page?.extract
+        val tasteLine = taste.value.summary()?.let {
+            "This regular's heavy rotation: $it. When it genuinely fits, connect what you're describing " +
+                "to what they already play — one natural aside, never forced, never flattery. "
+        } ?: ""
+        val sys = "You are the owner of a legendary record shop — encyclopedic, warm, a little opinionated, " +
+            "the friend who always has one more story. Write 2-3 SHORT paragraphs separated by blank lines, " +
+            "plain conversational English. Lead with the most interesting thing, not the most obvious. " +
+            "Weave in the kind of details a real music nerd trades over the counter: who's in the band, " +
+            "how a song got made, samples and influences, feuds, chart or cultural moments, what came after. " +
+            tasteLine +
+            (if (reference != null) "Every fact must come from the REFERENCE below — do NOT contradict or go beyond it. " +
+                "If something juicy isn't in the reference, say it's not documented rather than guessing. "
             else "You have NO reference for this — so be brief and general, and clearly say you're not certain of specifics; do not invent facts. ") +
             antiHallucination + " " + styleHint()
         val ask = when (topic) {
-            "album" -> "Tell me about the album \"$al\" by $ar."
-            "artist" -> "Tell me about the artist $ar — their sound, importance, and who they connect to."
-            "era" -> "Place the song \"$t\" by $ar in its era, scene and genre — what was happening around it."
-            "songwriter" -> "Who wrote, composed or produced \"$t\" by $ar, and any notable story behind it?"
-            else -> "Tell me about the song \"$t\" by $ar — its story, meaning, or how it was made."
+            "album" -> "Tell me about the album \"$al\" by $ar — the story around its making, its place in their run, and a fun fact worth telling a customer."
+            "artist" -> "Tell me about $ar — who's in the band (members and what they play, if documented), how they formed, what makes their sound theirs, and the fun facts a fan would want."
+            "era" -> "Place the song \"$t\" by $ar in its era, scene and genre — what was happening around it, and who else mattered right then."
+            "songwriter" -> "Who wrote, composed or produced \"$t\" by $ar, and any notable story behind how it came together?"
+            else -> "Tell me about the song \"$t\" by $ar — its story, meaning, how it was made, and anything surprising about it."
         }
         val user = ask + (reference?.let { "\n\nREFERENCE (from Wikipedia):\n$it" } ?: "")
         val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("system", sys), AiClient.Msg("user", user))) { tok ->
@@ -789,7 +931,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
             // 2) Build a pool of REAL songs the user owns: same artist + same genre.
             val pool = buildSimilarPool(ar, genre, seedId)
-            val libraryPicks = if (pool.size >= 4) rankPool(ctx, ar, pool) else emptyList()
+            val libraryPicks = if (pool.size >= 4) rankPool(ctx, ar, genre, year, pool) else emptyList()
 
             // 3) Grounded discovery for the YouTube path (different artists, same lane).
             val discovery = discoverSimilar(ctx, ar, genre, year)
@@ -809,13 +951,19 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Look up the seed track on the server to recover its genre/year/id for grounding. */
+    /**
+     * Look up the seed track on the server to recover its genre/year/id for grounding.
+     * Query by TITLE ONLY: Navidrome's search3 matches songs on the title field, so
+     * appending the artist frequently returns zero hits and nulls the whole grounding.
+     */
     private suspend fun resolveSeed(title: String, artist: String): Song? = try {
-        val res = Subsonic.api?.search3("$title $artist", songCount = 10)?.response?.searchResult3?.song ?: emptyList()
+        val res = Subsonic.api?.search3(title, songCount = 20)?.response?.searchResult3?.song ?: emptyList()
         res.firstOrNull {
             it.title?.equals(title, true) == true &&
                 (artist.isBlank() || looseMatch(it.artist, artist, 4))
-        } ?: res.firstOrNull { looseMatch(it.title, title, 5) }
+        } ?: res.firstOrNull {
+            looseMatch(it.title, title, 5) && (artist.isBlank() || looseMatch(it.artist, artist, 4))
+        }
     } catch (_: Exception) { null }
 
     /** Real owned songs to choose from: same genre + same artist (+ local device tracks of that genre). */
@@ -836,15 +984,36 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         return out.values.toList()
     }
 
-    /** Number the pool and let the model pick the closest matches by index (recall -> selection). */
-    private suspend fun rankPool(ctx: String, artist: String, pool: List<Song>): List<SimilarItem> {
-        val capped = if (pool.size > 120) pool.shuffled().take(120) else pool
+    /**
+     * Deterministic prefilter (genre/era/artist-variety scored, max 2 per artist, ≤20
+     * candidates) — small models pick reliably from 20 and collapse on 120 — then the
+     * model picks the closest by index (recall -> selection).
+     */
+    private fun prefilterPool(artist: String, genre: String?, year: Int?, pool: List<Song>): List<Song> {
+        fun score(s: Song): Int =
+            (if (genre != null && s.genre?.equals(genre, true) == true) 3 else 0) +
+                (if (year != null && s.year != null && kotlin.math.abs(s.year - year) <= 10) 2 else 0) +
+                (if (!looseMatch(s.artist, artist, 4)) 1 else 0) // cross-artist variety bonus
+        val perArtist = HashMap<String, Int>()
+        val out = ArrayList<Song>(20)
+        for (s in pool.shuffled().sortedByDescending(::score)) { // stable sort keeps shuffle as tiebreak
+            val a = s.artist?.lowercase() ?: "?"
+            if ((perArtist[a] ?: 0) >= 2) continue
+            perArtist[a] = (perArtist[a] ?: 0) + 1
+            out.add(s)
+            if (out.size >= 20) break
+        }
+        return out
+    }
+
+    private suspend fun rankPool(ctx: String, artist: String, genre: String?, year: Int?, pool: List<Song>): List<SimilarItem> {
+        val capped = prefilterPool(artist, genre, year, pool)
         val numbered = capped.mapIndexed { i, s ->
             "${i + 1}. ${s.artist ?: "?"} - ${s.title ?: "?"}${s.genre?.let { " [$it]" } ?: ""}"
         }.joinToString("\n")
         // Instruction placed AFTER the list so context truncation can't drop it.
         val user = "Seed song: $ctx.\n\nNumbered library of songs the listener owns:\n\n$numbered\n\n" +
-            "Task: pick the 12 songs above that are the CLOSEST match to the seed in genre, style, mood, energy and era. " +
+            "Task: pick the 10 songs above that are the CLOSEST match to the seed in genre, style, mood, energy and era. " +
             "Prefer the same or adjacent genre; vary the artists; do NOT pick the seed itself. " +
             "Reply ONLY as JSON: {\"picks\":[numbers]} using ONLY numbers from the list."
         val json = AiClient.chat(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("user", user)), json = true)
@@ -873,7 +1042,8 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     } catch (_: Exception) { emptyList() }
 
     private suspend fun findInLibrary(title: String, artist: String): Song? = try {
-        val res = Subsonic.api?.search3("$title $artist", songCount = 8)?.response?.searchResult3?.song ?: emptyList()
+        // Title-only query for the same reason as resolveSeed — artist tokens zero it out.
+        val res = Subsonic.api?.search3(title, songCount = 12)?.response?.searchResult3?.song ?: emptyList()
         res.firstOrNull { looseMatch(it.title, title, 5) && looseMatch(it.artist, artist, 4) }
     } catch (_: Exception) { null }
 
@@ -934,8 +1104,19 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
                     "original lines must not. Keep stanza breaks (blank lines) where the original has them. " +
                     "If a line is already in ${_aiLang.value}, still show both. Output only the lyrics, " +
                     "no commentary.\n\n$lyr"
-            else
-                "In a short paragraph, explain the meaning and themes of these song lyrics. Plain text.\n\n$lyr"
+            else buildString {
+                append("Explain these song lyrics like a knowledgeable friend — plain, conversational English, ")
+                append("short sentences, no academic words. Use EXACTLY this markdown structure:\n")
+                append("## What it's about\nOne short paragraph: the story or subject of the song.\n")
+                append("## What it means\nTwo short paragraphs: the deeper meaning, emotions, what the writer is really saying, and why it hits.\n")
+                append("## Slang & references\nBullet list: every slang word, idiom, name or reference in the lyrics and what it means HERE. If there are none, write \"Nothing tricky in this one.\"\n\n")
+                append("Be specific to these lyrics — quote a word or line when you decode it. No intro, no outro.\n\n")
+                append("Song: \"${_title.value ?: ""}\" by ${_artist.value ?: "unknown"}")
+                _albumTitle.value?.let { append(" (album \"$it\")") }
+                val ref = Wikipedia.lookup("${_title.value ?: ""} song ${_artist.value ?: ""}")
+                if (ref != null) append("\n\nBACKGROUND (from Wikipedia — use it, don't contradict it):\n$ref")
+                append("\n\nLYRICS:\n$lyr")
+            }
             val ok = AiClient.chatStream(_aiBaseUrl.value, _aiModel.value, listOf(AiClient.Msg("user", prompt))) { tok ->
                 _aiText.value += tok
             }
@@ -1069,6 +1250,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             updateNowPlaying()
             rebuildQueue()
             prefetchLyrics()
+            karaokeLoadLyrics()
             mediaItem?.mediaId?.let { scrobble(it) }
             if (_radio.value) maybeExtendRadio()
         }
@@ -1156,6 +1338,13 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     val autoLyrics: StateFlow<Boolean> = _autoLyrics.asStateFlow()
     fun setAutoLyrics(v: Boolean) { prefs.autoLyrics = v; _autoLyrics.value = v }
 
+    private val _carKaraoke = MutableStateFlow(prefs.carKaraoke)
+    val carKaraoke: StateFlow<Boolean> = _carKaraoke.asStateFlow()
+    fun setCarKaraoke(v: Boolean) {
+        prefs.carKaraoke = v; _carKaraoke.value = v
+        if (v) karaokeLoadLyrics() else restoreRealTitles()
+    }
+
     private fun savePlaybackSnapshot() {
         val c = controller ?: return
         val n = c.mediaItemCount
@@ -1165,7 +1354,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             SavedTrack(
                 mediaId = mi.mediaId,
                 uri = mi.localConfiguration?.uri?.toString() ?: "",
-                title = mi.mediaMetadata.title?.toString(),
+                // Karaoke rewrites the live title with lyric lines — persist the real one,
+                // or the restored queue (and the next lyricsKey) is poisoned with a lyric.
+                title = mi.mediaMetadata.extras?.getString("origTitle")
+                    ?: mi.mediaMetadata.title?.toString(),
                 artist = mi.mediaMetadata.artist?.toString(),
                 artUri = mi.mediaMetadata.artworkUri?.toString()
             )
@@ -1222,16 +1414,89 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
                     val d = c.duration
                     _duration.value = if (d > 0) d else 0
                 }
+                if (_carKaraoke.value) pushKaraokeLine()
                 if (++tick % 10 == 0) savePlaybackSnapshot() // persist ~every 5s
                 delay(500)
             }
         }
     }
 
+    // ---- Car karaoke: the head unit's only text channel is AVRCP track metadata, so in
+    // karaoke mode the current synced lyric line is pushed as the *title*. The real title
+    // is stashed in the item's extras ("origTitle") so the in-app UI never shows lyric
+    // lines as the song name.
+    private var lastKaraokeLine: String? = null
+    private var lastKaraokeMediaId: String? = null
+
+    /**
+     * Karaoke mode fetches its own lyrics per track — it must not depend on the lyric
+     * screen having been opened, and must never time Song A's lines against Song B.
+     * [syncedLyricsFor] marks which mediaId the published _syncedLyrics belong to.
+     */
+    private fun karaokeLoadLyrics() {
+        if (!_carKaraoke.value) return
+        val mid = controller?.currentMediaItem?.mediaId ?: return
+        if (mid.startsWith("radio:")) return
+        viewModelScope.launch {
+            val key = lyricsKey() ?: return@launch
+            val cached = lyricsCache[key] ?: fetchLyrics().also { cacheIfFound(key, it) }
+            // Only publish if this is still the playing track (fetch may take seconds).
+            if (controller?.currentMediaItem?.mediaId == mid) {
+                _lyrics.value = cached.plain
+                _syncedLyrics.value = cached.synced
+                syncedLyricsFor = mid
+            }
+        }
+    }
+
+    private fun pushKaraokeLine() {
+        val c = controller ?: return
+        val item = c.currentMediaItem ?: return
+        if (item.mediaId.startsWith("radio:")) return
+        if (item.mediaId != lastKaraokeMediaId) { lastKaraokeMediaId = item.mediaId; lastKaraokeLine = null }
+        if (syncedLyricsFor != item.mediaId) return // stale lyrics from a previous track
+        val synced = _syncedLyrics.value ?: return
+        if (synced.isEmpty() || !c.isPlaying) return
+        val pos = _position.value
+        val line = synced.lastOrNull { it.first <= pos }?.second?.takeIf { it.isNotBlank() }
+            ?: item.mediaMetadata.extras?.getString("origTitle")
+            ?: return
+        if (line == lastKaraokeLine) return
+        lastKaraokeLine = line
+        val md = item.mediaMetadata
+        val extras = android.os.Bundle(md.extras ?: android.os.Bundle()).apply {
+            if (getString("origTitle") == null) putString("origTitle", md.title?.toString())
+        }
+        val updated = item.buildUpon()
+            .setMediaMetadata(md.buildUpon().setTitle(line).setExtras(extras).build())
+            .build()
+        // Same URI + same mediaId: media3 swaps metadata without interrupting playback.
+        runCatching { c.replaceMediaItem(c.currentMediaItemIndex, updated) }
+    }
+
+    private var syncedLyricsFor: String? = null
+
+    /** Turn titles back into real song names — every item karaoke touched, not just the current. */
+    private fun restoreRealTitles() {
+        lastKaraokeLine = null
+        val c = controller ?: return
+        for (i in 0 until c.mediaItemCount) {
+            val item = c.getMediaItemAt(i)
+            val md = item.mediaMetadata
+            val orig = md.extras?.getString("origTitle") ?: continue
+            if (orig == md.title?.toString()) continue
+            val updated = item.buildUpon()
+                .setMediaMetadata(md.buildUpon().setTitle(orig).build())
+                .build()
+            runCatching { c.replaceMediaItem(i, updated) }
+        }
+    }
+
     private fun updateNowPlaying() {
         val c = controller ?: return
         val md = c.mediaMetadata
-        _title.value = md.title?.toString()
+        // Car karaoke rewrites the AVRCP title with lyric lines; the app UI shows the real one.
+        _title.value = md.extras?.getString("origTitle") ?: md.title?.toString()
         _artist.value = md.artist?.toString()
         _albumTitle.value = md.albumTitle?.toString()
         val art = md.artworkUri?.toString()
@@ -1265,7 +1530,8 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
                 QueueItem(
                     index = i,
                     mediaId = mi.mediaId,
-                    title = mi.mediaMetadata.title?.toString() ?: "Unknown",
+                    title = mi.mediaMetadata.extras?.getString("origTitle")
+                        ?: mi.mediaMetadata.title?.toString() ?: "Unknown",
                     artist = mi.mediaMetadata.artist?.toString() ?: "",
                     artworkUri = mi.mediaMetadata.artworkUri?.toString(),
                     isCurrent = i == c.currentMediaItemIndex
@@ -1412,6 +1678,12 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     private val _playedIds = MutableStateFlow<Set<String>>(emptySet())
     private val _recentIds = MutableStateFlow<Set<String>>(emptySet())
 
+    /**
+     * "Fresh" for the Forgotten crate = the last few dozen albums, NOT the 500-deep probe:
+     * against 500, everything ever played counts as fresh and the crate is permanently empty.
+     */
+    private val _freshIds = MutableStateFlow<Set<String>>(emptySet())
+
     fun loadShelf(force: Boolean = false) = viewModelScope.launch {
         if (_shelfLoading.value) return@launch
         if (!force && _shelf.value.isNotEmpty()) return@launch
@@ -1436,6 +1708,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             val frequent = Subsonic.api?.getAlbumList2("frequent", PLAYED_PROBE)
                 ?.response?.albumList2?.album ?: emptyList()
             _recentIds.value = recent.map { it.id }.toSet()
+            _freshIds.value = recent.take(40).map { it.id }.toSet()
             _playedIds.value = _recentIds.value + frequent.map { it.id }.toSet()
         } catch (e: Exception) {
             _error.value = e.message ?: "Could not read your library"
@@ -1471,7 +1744,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
      * only relying on starred *albums* left this crate permanently empty.
      */
     val forgottenFavourites: StateFlow<List<Album>> =
-        combine(_starredAlbums, _starredSongs, _recentIds) { starred, songs, fresh ->
+        combine(_starredAlbums, _starredSongs, _freshIds) { starred, songs, fresh ->
             val fromSongs = songs.asSequence()
                 .filter { it.localUri == null && !it.albumId.isNullOrBlank() }
                 .groupBy { it.albumId!! }
@@ -1495,14 +1768,78 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
+     * What this listener actually plays, as weights: artists, genres and decades scored
+     * from most-played + recently-played + starred. Drives the shopkeeper's taste.
+     */
+    data class Taste(
+        val artists: Map<String, Int> = emptyMap(),
+        val genres: Map<String, Int> = emptyMap(),
+        val decades: Map<Int, Int> = emptyMap()
+    ) {
+        val isEmpty get() = artists.isEmpty() && genres.isEmpty()
+        /** Short human summary for AI prompts: "Faith No More, Pearl Jam; alternative, grunge; the 90s". */
+        fun summary(): String? {
+            if (isEmpty) return null
+            val a = artists.entries.sortedByDescending { it.value }.take(6).joinToString(", ") { it.key }
+            val g = genres.entries.sortedByDescending { it.value }.take(4).joinToString(", ") { it.key }
+            val d = decades.entries.sortedByDescending { it.value }.take(2).joinToString(" and ") { "the ${it.key}s" }
+            return listOf(a, g, d).filter { it.isNotBlank() }.joinToString("; ")
+        }
+    }
+
+    val taste: StateFlow<Taste> =
+        combine(_frequent, _recent, _starredSongs, _starredAlbums) { freq, rec, ss, sa ->
+            val artists = HashMap<String, Int>(); val genres = HashMap<String, Int>(); val decades = HashMap<Int, Int>()
+            fun add(artist: String?, genre: String?, year: Int?, w: Int) {
+                artist?.takeIf { it.isNotBlank() }?.let { artists.merge(it, w, Int::plus) }
+                genre?.takeIf { it.isNotBlank() }?.let { genres.merge(it, w, Int::plus) }
+                year?.takeIf { it > 1000 }?.let { decades.merge((it / 10) * 10, w, Int::plus) }
+            }
+            freq.forEach { add(it.artist, it.genre, it.year, 3) }   // most-played weighs most
+            rec.forEach { add(it.artist, it.genre, it.year, 2) }
+            sa.forEach { add(it.artist, it.genre, it.year, 2) }
+            ss.forEach { add(it.artist, it.genre, it.year, 1) }
+            Taste(artists, genres, decades)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, Taste())
+
+    /**
      * One album, the same one all day. A pick that changes every time Home is opened is
-     * not a recommendation, it's a shuffle — so it's seeded on the date.
+     * not a recommendation, it's a shuffle — so it's seeded on the date. With listening
+     * history the pick leans toward the listener's taste (adjacent artists/genres/decades,
+     * favouring records they HAVEN'T played); one day in three it deliberately explores
+     * outside the pattern so the shop never becomes an echo chamber.
      */
     val tonightsPick: StateFlow<Album?> =
-        combine(_shelf, neverPlayed) { shelf, unplayed ->
+        combine(_shelf, neverPlayed, taste) { shelf, unplayed, t ->
             val pool = unplayed.ifEmpty { shelf }
-            if (pool.isEmpty()) null
-            else pool[(LocalDate.now().toEpochDay().mod(pool.size))]
+            if (pool.isEmpty()) return@combine null
+            val day = LocalDate.now().toEpochDay()
+            if (t.isEmpty) return@combine pool[day.mod(pool.size)]
+            val explore = day.mod(3L) == 2L
+            fun score(a: Album): Int =
+                (t.artists[a.artist] ?: 0) * 3 +
+                    (t.genres[a.genre] ?: 0) * 2 +
+                    (a.year?.takeIf { it > 1000 }?.let { t.decades[(it / 10) * 10] } ?: 0)
+            val ranked = pool.sortedByDescending(::score)
+            val slice = if (explore) ranked.filter { score(it) == 0 }.ifEmpty { ranked }
+            else ranked.take(40)
+            slice[day.mod(slice.size)]
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Why tonight's pick is on the counter — shown under the card, derived, no AI needed. */
+    val tonightsPickReason: StateFlow<String?> =
+        combine(tonightsPick, taste) { pick, t ->
+            if (pick == null || t.isEmpty) return@combine null
+            val aw = t.artists[pick.artist] ?: 0
+            val gw = t.genres[pick.genre] ?: 0
+            val dec = pick.year?.takeIf { it > 1000 }?.let { (it / 10) * 10 }
+            val dw = dec?.let { t.decades[it] } ?: 0
+            when {
+                aw > 0 -> "Because ${pick.artist} keeps landing on your turntable"
+                gw > 0 -> "Because you've been deep in ${pick.genre?.lowercase()} lately"
+                dw > 0 -> "Because the ${dec}s keep pulling you back"
+                else -> "Something different — trust the counter"
+            }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _blindPick = MutableStateFlow<Album?>(null)
@@ -1984,6 +2321,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (cached != null) {
             _lyrics.value = cached.plain
             _syncedLyrics.value = cached.synced
+            syncedLyricsFor = _currentMediaId.value
             _lyricsLoading.value = false
             return@launch
         }
@@ -1993,6 +2331,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         cacheIfFound(key, result)
         _lyrics.value = result.plain
         _syncedLyrics.value = result.synced
+        syncedLyricsFor = _currentMediaId.value
         _lyricsLoading.value = false
     }
 

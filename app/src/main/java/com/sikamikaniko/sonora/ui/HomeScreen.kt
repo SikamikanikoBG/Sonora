@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shuffle
@@ -87,7 +88,7 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
     // Voice quick-search: speak a song/artist, jump straight to Library results.
     val startVoice = rememberVoiceInput("Say a song, artist or album…") { spoken ->
         vm.requestLibrarySearch(spoken)
-        nav.navigate("library")
+        nav.navigateDistinct("library")
     }
 
     renaming?.let { mix ->
@@ -105,17 +106,18 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
         item {
             HomeHeader(
                 brand = brand,
-                onAsk = { nav.navigate("ai") },
+                onAsk = { nav.navigateDistinct("ai") },
                 onShuffle = { vm.shuffleLibrary() }
             )
         }
         item {
             HomeQuickSearch(
-                onOpenSearch = { nav.navigate("library") },
+                onOpenSearch = { nav.navigateDistinct("library") },
                 onVoice = startVoice
             )
         }
         // --- Your music first: pick up where you left off, then your mixes, then the rest ---
+        item { SimilarRadioCard(vm, brand) }
         item { Rail("Recently played", recent, vm, nav) }
         if (mixes.isNotEmpty() || aiReady) {
             item {
@@ -135,7 +137,7 @@ fun HomeScreen(vm: SonoraViewModel, nav: NavController) {
                             onFreeze = { vm.saveQueueAsPlaylist(mix.name) }
                         )
                     }
-                    item { NewMixCard { nav.navigate("ai") } }
+                    item { NewMixCard { nav.navigateDistinct("ai") } }
                 }
             }
         }
@@ -393,6 +395,36 @@ private fun Rail(title: String, albums: List<Album>, vm: SonoraViewModel, nav: N
     ) {
         items(albums, key = { it.id }) { album ->
             AlbumRailItem(vm, nav, album)
+        }
+    }
+}
+
+/** One-tap Similar Radio: endless queue matched to the song that's on right now. */
+@Composable
+private fun SimilarRadioCard(vm: SonoraViewModel, brand: androidx.compose.ui.graphics.Brush) {
+    val hasCurrent by vm.hasCurrent.collectAsState()
+    if (!hasCurrent) return
+    val title by vm.title.collectAsState()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(brand)
+            .clickable { vm.startSimilarRadio() }
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Icon(Icons.Filled.Radio, null, tint = Color.White)
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text("Similar radio", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Endless queue matched to “${title ?: "what's playing"}”",
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

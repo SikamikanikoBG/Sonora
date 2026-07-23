@@ -73,6 +73,7 @@ fun DiscoverScreen(vm: SonoraViewModel, nav: NavController) {
     val exact by vm.playCountsExact.collectAsState()
     val forgotten by vm.forgottenFavourites.collectAsState()
     val pick by vm.tonightsPick.collectAsState()
+    val pickReason by vm.tonightsPickReason.collectAsState()
     val blind by vm.blindPick.collectAsState()
 
     LaunchedEffect(Unit) {
@@ -115,8 +116,9 @@ fun DiscoverScreen(vm: SonoraViewModel, nav: NavController) {
                         album = album,
                         neverPlayed = unplayed.any { it.id == album.id },
                         exact = exact,
+                        reason = pickReason,
                         onPlay = { vm.playAlbums(listOf(album), false) },
-                        onOpen = { nav.navigate("album/${album.id}") },
+                        onOpen = { nav.navigateDistinct("album/${album.id}") },
                         onAbout = { vm.openInsights(null, album.artist, album.name) }
                     )
                 }
@@ -131,7 +133,7 @@ fun DiscoverScreen(vm: SonoraViewModel, nav: NavController) {
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                     ) {
                         decades.forEach { (decade, albums) ->
-                            CrateChip("${decade}s", albums.size) { nav.navigate("crate/decade:$decade") }
+                            CrateChip("${decade}s", albums.size) { nav.navigateDistinct("crate/decade:$decade") }
                         }
                     }
                 }
@@ -148,7 +150,7 @@ fun DiscoverScreen(vm: SonoraViewModel, nav: NavController) {
                         genres.take(24).forEach { g ->
                             val name = g.value ?: return@forEach
                             // Encode: genres like "Hip Hop/Rap" or "R&B" would break the route.
-                            CrateChip(name, g.albumCount ?: 0) { nav.navigate("genre/${Uri.encode(name)}") }
+                            CrateChip(name, g.albumCount ?: 0) { nav.navigateDistinct("genre/${Uri.encode(name)}") }
                         }
                     }
                 }
@@ -166,13 +168,13 @@ fun DiscoverScreen(vm: SonoraViewModel, nav: NavController) {
                         line = if (exact) "${unplayed.size} albums you own and have never pressed play on"
                         else "${unplayed.size} albums that aren't in your recent or most-played",
                         modifier = Modifier.weight(1f)
-                    ) { nav.navigate("crate/unplayed") }
+                    ) { nav.navigateDistinct("crate/unplayed") }
                     CrateCard(
                         icon = Icons.Filled.Star,
                         title = "Forgotten",
                         line = "${forgotten.size} you starred once and haven't played since",
                         modifier = Modifier.weight(1f)
-                    ) { nav.navigate("crate/forgotten") }
+                    ) { nav.navigateDistinct("crate/forgotten") }
                 }
             }
             item {
@@ -189,7 +191,7 @@ fun DiscoverScreen(vm: SonoraViewModel, nav: NavController) {
                         title = "Everything",
                         line = "${shelf.size} albums on the shelves",
                         modifier = Modifier.weight(1f)
-                    ) { nav.navigate("crate/all") }
+                    ) { nav.navigateDistinct("crate/all") }
                 }
             }
             }
@@ -298,6 +300,7 @@ private fun TonightsPick(
     album: Album,
     neverPlayed: Boolean,
     exact: Boolean,
+    reason: String? = null,
     onPlay: () -> Unit,
     onOpen: () -> Unit,
     onAbout: () -> Unit
@@ -335,6 +338,15 @@ private fun TonightsPick(
                         if (exact) "On your shelves. Never played." else "You haven't played this in a long time.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                reason?.let {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -466,6 +478,7 @@ private fun LoadingShelf() {
 @Composable
 fun DiscoverStorefront(vm: SonoraViewModel, nav: NavController) {
     val pick by vm.tonightsPick.collectAsState()
+    val pickReason by vm.tonightsPickReason.collectAsState()
     val unplayed by vm.neverPlayed.collectAsState()
     val exact by vm.playCountsExact.collectAsState()
     val forgotten by vm.forgottenFavourites.collectAsState()
@@ -484,15 +497,16 @@ fun DiscoverStorefront(vm: SonoraViewModel, nav: NavController) {
                 style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f)
             )
-            TextButton(onClick = { nav.navigate("discover") }) { Text("Open shop") }
+            TextButton(onClick = { nav.navigateDistinct("discover") }) { Text("Open shop") }
         }
         pick?.let { album ->
             TonightsPick(
                 album = album,
                 neverPlayed = unplayed.any { it.id == album.id },
                 exact = exact,
+                reason = pickReason,
                 onPlay = { vm.playAlbums(listOf(album), false) },
-                onOpen = { nav.navigate("album/${album.id}") },
+                onOpen = { nav.navigateDistinct("album/${album.id}") },
                 onAbout = { vm.openInsights(null, album.artist, album.name) }
             )
         }
@@ -503,21 +517,21 @@ fun DiscoverStorefront(vm: SonoraViewModel, nav: NavController) {
                 title = if (exact) "Never played" else "Rarely played",
                 line = "${unplayed.size} albums",
                 modifier = Modifier.weight(1f)
-            ) { nav.navigate("crate/unplayed") }
+            ) { nav.navigateDistinct("crate/unplayed") }
             // Its own destination, not another door to the shop — "Open shop" is right above.
             CrateCard(
                 icon = Icons.Filled.Star,
                 title = "Forgotten",
                 line = "${forgotten.size} starred",
                 modifier = Modifier.weight(1f)
-            ) { nav.navigate("crate/forgotten") }
+            ) { nav.navigateDistinct("crate/forgotten") }
             CrateCard(
                 icon = Icons.Filled.Casino,
                 title = "Blind pick",
                 line = "Trust me",
                 highlight = true,
                 modifier = Modifier.weight(1f)
-            ) { nav.navigate("discover"); vm.rollBlindPick() }
+            ) { nav.navigateDistinct("discover"); vm.rollBlindPick() }
         }
     }
 }

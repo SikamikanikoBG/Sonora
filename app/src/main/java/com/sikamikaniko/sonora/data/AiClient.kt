@@ -68,7 +68,9 @@ object AiClient {
                     "messages" to messages.map { mapOf("role" to it.role, "content" to it.content) },
                     "stream" to false,
                     "think" to false, // disable reasoning tokens on thinking-capable models (ignored otherwise)
-                    "options" to mapOf("num_ctx" to 8192, "temperature" to 0.4)
+                    // JSON calls are extraction/index-picking — classification, not writing;
+                    // sampling noise there means off-vocab genres and invalid indices.
+                    "options" to mapOf("num_ctx" to 8192, "temperature" to if (json) 0.0 else 0.4)
                 )
                 if (json) payload["format"] = "json"
                 val body = gson.toJson(payload).toRequestBody(JSON)

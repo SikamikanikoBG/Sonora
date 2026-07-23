@@ -50,6 +50,11 @@ class Prefs(context: Context) {
         get() = sp.getString("aiLang", "English") ?: "English"
         set(v) = sp.edit().putString("aiLang", v).apply()
 
+    /** Car karaoke: push the current synced lyric line to the Bluetooth display as the track title. */
+    var carKaraoke: Boolean
+        get() = sp.getBoolean("carKaraoke", false)
+        set(v) = sp.edit().putBoolean("carKaraoke", v).apply()
+
     /** Saved AI mixes, serialised as a JSON array. */
     var aiMixesJson: String
         get() = sp.getString("aiMixes", "[]") ?: "[]"

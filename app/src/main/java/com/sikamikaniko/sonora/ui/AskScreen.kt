@@ -132,7 +132,7 @@ fun AskScreen(vm: SonoraViewModel, nav: NavController) {
                 )
                 Spacer(Modifier.height(18.dp))
                 Box(
-                    Modifier.clip(RoundedCornerShape(50)).background(brand).clickable { nav.navigate("settings") }.padding(horizontal = 22.dp, vertical = 12.dp)
+                    Modifier.clip(RoundedCornerShape(50)).background(brand).clickable { nav.navigateDistinct("settings") }.padding(horizontal = 22.dp, vertical = 12.dp)
                 ) { Text("Open AI settings", color = Color.White, fontWeight = FontWeight.SemiBold) }
             }
             return

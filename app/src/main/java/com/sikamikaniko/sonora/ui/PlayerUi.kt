@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
@@ -295,6 +296,7 @@ fun NowPlayingScreen(
                     },
                     onInsights = onOpenInsights,
                     onSimilar = onFindSimilar,
+                    onSimilarRadio = { vm.startSimilarRadio() },
                     onShare = { ShareUtil.shareNowPlaying(context, title, artist) },
                     onGoAlbum = { albumId?.let(onGoToAlbum) },
                     onGoArtist = { artistId?.let(onGoToArtist) }
@@ -718,6 +720,7 @@ private fun NpOverflow(
     onChords: () -> Unit,
     onInsights: () -> Unit,
     onSimilar: () -> Unit,
+    onSimilarRadio: () -> Unit,
     onShare: () -> Unit,
     onGoAlbum: () -> Unit,
     onGoArtist: () -> Unit
@@ -728,6 +731,7 @@ private fun NpOverflow(
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("About this music") }, leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) }, onClick = { expanded = false; onInsights() })
             DropdownMenuItem(text = { Text("Find similar songs") }, leadingIcon = { Icon(Icons.Filled.Explore, null) }, onClick = { expanded = false; onSimilar() })
+            DropdownMenuItem(text = { Text("Similar radio") }, leadingIcon = { Icon(Icons.Filled.Radio, null) }, onClick = { expanded = false; onSimilarRadio() })
             DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Filled.Share, null) }, onClick = { expanded = false; onShare() })
             DropdownMenuItem(text = { Text("Lyrics") }, leadingIcon = { Icon(Icons.Filled.Lyrics, null) }, onClick = { expanded = false; onLyrics() })
             DropdownMenuItem(text = { Text("Guitar chords") }, leadingIcon = { Icon(Icons.Filled.MusicNote, null) }, onClick = { expanded = false; onChords() })
