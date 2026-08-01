@@ -90,6 +90,14 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("autoLyrics", false)
         set(v) = sp.edit().putBoolean("autoLyrics", v).apply()
 
+    /**
+     * Download the current and next couple of tracks in full while the connection is
+     * good, so playback survives a coverage gap (default on). Costs a little data.
+     */
+    var preloadEnabled: Boolean
+        get() = sp.getBoolean("preloadEnabled", true)
+        set(v) = sp.edit().putBoolean("preloadEnabled", v).apply()
+
     /** Snapshot of the last playback (queue + position) for resume. */
     var lastPlaybackJson: String?
         get() = sp.getString("lastPlayback", null)

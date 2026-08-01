@@ -4,9 +4,6 @@ import android.app.PendingIntent
 import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -22,6 +19,7 @@ import com.sikamikaniko.sonora.MainActivity
 class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
+    private var guard: StreamGuard? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -31,34 +29,35 @@ class PlaybackService : MediaSessionService() {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
-        // Generous timeouts + cross-protocol redirects so flaky mobile networks
-        // (e.g. driving through patchy coverage) don't kill a stream mid-track.
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(30_000)
-            .setReadTimeoutMs(30_000)
-        val upstreamFactory = DefaultDataSource.Factory(this, httpFactory)
-        val cacheFactory = CacheDataSource.Factory()
-            .setCache(PlayerCache.get(this))
-            .setUpstreamDataSourceFactory(upstreamFactory)
-            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
-
-        // Buffer generously so a brief connectivity dip is ridden out from cache
-        // instead of stopping playback a few seconds in.
+        // Buffer deeply so a coverage gap is ridden out from RAM and disk instead of
+        // stopping playback. Five minutes of audio comfortably covers a tunnel or a
+        // valley; `prioritizeTimeOverSizeThresholds` keeps filling toward the minimum
+        // even on a big file, and the byte cap keeps that honest on low-RAM phones.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 30_000,
-                /* maxBufferMs = */ 120_000,
-                /* bufferForPlaybackMs = */ 2_500,
-                /* bufferForPlaybackAfterRebufferMs = */ 5_000
+                /* minBufferMs = */ 60_000,
+                /* maxBufferMs = */ 300_000,
+                /* bufferForPlaybackMs = */ 2_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 4_000
             )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .setTargetBufferBytes(32 * 1024 * 1024)
+            // Keep a minute behind us so re-preparing after a dropout resumes from
+            // memory rather than re-fetching what we already played.
+            .setBackBuffer(/* backBufferDurationMs = */ 60_000, /* retainBackBufferFromKeyframe = */ true)
             .build()
 
+        val mediaSourceFactory = DefaultMediaSourceFactory(Streaming.cacheFactory(this))
+            .setLoadErrorHandlingPolicy(Streaming.loadErrorPolicy())
+
         val player = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(cacheFactory))
+            .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
             .setHandleAudioBecomingNoisy(true)
+            // Screen off in a phone mount is the normal case in the car: hold the CPU
+            // and wifi locks while playing, or the radio sleeps and the stream stalls.
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
 
         // Tapping the media notification / lock-screen controls opens the app.
@@ -74,6 +73,11 @@ class PlaybackService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivity)
             .build()
+
+        // Reconnect/stall recovery and preload live here, not in the ViewModel: playback
+        // routinely outlives the UI (Bluetooth autoplay in the car starts this service
+        // with no Activity at all), and that is exactly when it needs protecting.
+        guard = StreamGuard(this, player).also { it.start() }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
@@ -87,6 +91,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        guard?.release()
+        guard = null
         mediaSession?.run {
             player.release()
             release()

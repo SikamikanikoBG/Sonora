@@ -308,6 +308,19 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                     androidx.compose.material3.Switch(checked = resume, onCheckedChange = { vm.setResumeEnabled(it) })
                 }
                 RowDivider()
+                val preload by vm.preloadEnabled.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Preload upcoming tracks")
+                        Text(
+                            "Download the current and next few songs in full while the signal is good, so playback survives tunnels and dead spots. Uses a little more data.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    androidx.compose.material3.Switch(checked = preload, onCheckedChange = { vm.setPreloadEnabled(it) })
+                }
+                RowDivider()
                 val autoLyrics by vm.autoLyrics.collectAsState()
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) {

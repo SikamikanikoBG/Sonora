@@ -47,6 +47,9 @@ import com.sikamikaniko.sonora.data.Subsonic
 import com.sikamikaniko.sonora.data.Updater
 import com.sikamikaniko.sonora.playback.PlaybackService
 import com.sikamikaniko.sonora.playback.PlayerCache
+import com.sikamikaniko.sonora.playback.PlaybackHealth
+import com.sikamikaniko.sonora.playback.StreamGuard
+import com.sikamikaniko.sonora.playback.Streaming
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CoroutineStart
@@ -1234,8 +1237,11 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     private val _updateBusy = MutableStateFlow(false)
     val updateBusy: StateFlow<Boolean> = _updateBusy.asStateFlow()
 
-    // Guards an automatic retry when a stream drops on a flaky network.
-    private var errorRetries = 0
+    /**
+     * Connection resilience itself lives in [StreamGuard] inside the playback service,
+     * because playback outlives this ViewModel. Here we only mirror what it reports.
+     */
+    val reconnecting: StateFlow<Boolean> = PlaybackHealth.reconnecting
 
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) { _isPlaying.value = isPlaying; savePlaybackSnapshot() }
@@ -1246,27 +1252,12 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
                 pauseAfterTrack = false
                 _sleepEndOfTrack.value = false
             }
-            errorRetries = 0
             updateNowPlaying()
             rebuildQueue()
             prefetchLyrics()
             karaokeLoadLyrics()
             mediaItem?.mediaId?.let { scrobble(it) }
             if (_radio.value) maybeExtendRadio()
-        }
-        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-            // A dropped connection mid-track shouldn't look like the song "just stopped".
-            // Transparently re-prepare and resume from where we were, a few times.
-            val c = controller ?: return
-            if (errorRetries < 3) {
-                errorRetries++
-                val pos = c.currentPosition
-                c.prepare()
-                if (c.currentMediaItem?.mediaId?.startsWith("radio:") != true) c.seekTo(pos)
-                c.play()
-            } else {
-                _error.value = "Playback stopped — connection issue. Tap play to retry."
-            }
         }
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
             rebuildQueue()
@@ -1287,11 +1278,18 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (_loggedIn.value) refreshAll()
         maybeScanDevice()
         checkForUpdate()
+        // Surface anything the service-side guard gave up on through the normal error UI.
+        viewModelScope.launch {
+            PlaybackHealth.problem.collect { message ->
+                if (message != null) { _error.value = message; PlaybackHealth.consumeProblem() }
+            }
+        }
         viewModelScope.launch {
             NetworkMonitor.online(getApplication<Application>()).collect { up ->
                 val wasOffline = !_online.value
                 _online.value = up
                 // Coming back online — quietly recover content that failed while down.
+                // (Recovering *playback* is StreamGuard's job, in the service.)
                 if (up && wasOffline && _loggedIn.value) refreshAll()
             }
         }
@@ -1337,6 +1335,13 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     private val _autoLyrics = MutableStateFlow(prefs.autoLyrics)
     val autoLyrics: StateFlow<Boolean> = _autoLyrics.asStateFlow()
     fun setAutoLyrics(v: Boolean) { prefs.autoLyrics = v; _autoLyrics.value = v }
+
+    private val _preload = MutableStateFlow(prefs.preloadEnabled)
+    val preloadEnabled: StateFlow<Boolean> = _preload.asStateFlow()
+    fun setPreloadEnabled(v: Boolean) {
+        prefs.preloadEnabled = v; _preload.value = v
+        StreamGuard.active?.refreshPreload()
+    }
 
     private val _carKaraoke = MutableStateFlow(prefs.carKaraoke)
     val carKaraoke: StateFlow<Boolean> = _carKaraoke.asStateFlow()
@@ -1401,6 +1406,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             restorePlaybackSnapshot()
             updateNowPlaying()
             rebuildQueue()
+            StreamGuard.active?.refreshPreload()
             startPositionPoller()
         }, ContextCompat.getMainExecutor(ctx))
     }
@@ -2166,6 +2172,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (c.mediaItemCount == 0) { c.setMediaItems(items); c.prepare(); c.play() }
         else c.addMediaItems(items)
         rebuildQueue()
+        StreamGuard.active?.refreshPreload()
     }
 
     fun playNext(songs: List<Song>) {
@@ -2175,19 +2182,36 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         if (c.mediaItemCount == 0) { c.setMediaItems(items); c.prepare(); c.play() }
         else c.addMediaItems((c.currentMediaItemIndex + 1).coerceAtMost(c.mediaItemCount), items)
         rebuildQueue()
+        StreamGuard.active?.refreshPreload()
     }
 
     fun removeFromQueue(index: Int) {
         val c = controller ?: return
         if (index in 0 until c.mediaItemCount) c.removeMediaItem(index)
         rebuildQueue()
+        StreamGuard.active?.refreshPreload()
     }
 
-    fun togglePlay() { controller?.let { if (it.isPlaying) it.pause() else it.play() } }
-    fun next() { controller?.seekToNext() }
-    fun previous() { controller?.seekToPrevious() }
+    /**
+     * A player that gave up on a dead connection sits in STATE_IDLE, where `play()` is a
+     * no-op — so every transport control has to be willing to re-prepare first. Without
+     * this, "tap play to retry" simply did nothing.
+     */
+    private fun revive(c: MediaController) {
+        if (c.playbackState == Player.STATE_IDLE && c.mediaItemCount > 0) c.prepare()
+    }
+
+    fun togglePlay() {
+        controller?.let {
+            if (it.isPlaying) it.pause() else { StreamGuard.active?.onUserAction(); revive(it); it.play() }
+        }
+    }
+    fun next() { controller?.let { StreamGuard.active?.onUserAction(); revive(it); it.seekToNext() } }
+    fun previous() { controller?.let { StreamGuard.active?.onUserAction(); revive(it); it.seekToPrevious() } }
     fun seekTo(positionMs: Long) { controller?.seekTo(positionMs) }
-    fun playFromQueue(index: Int) { controller?.let { it.seekTo(index, 0L); it.play() } }
+    fun playFromQueue(index: Int) {
+        controller?.let { StreamGuard.active?.onUserAction(); revive(it); it.seekTo(index, 0L); it.play() }
+    }
 
     fun cycleRepeat() {
         val c = controller ?: return
@@ -2406,9 +2430,13 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             .setExtras(extras)
             .apply { artUrl?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
+        val uri = song.localUri ?: Subsonic.streamUrl(song.id)
         return MediaItem.Builder()
             .setMediaId(song.id)
-            .setUri(song.localUri ?: Subsonic.streamUrl(song.id))
+            .setUri(uri)
+            // Subsonic re-salts every stream URL, so without a stable key the media
+            // cache never hits and "cached for a flaky connection" is a lie.
+            .apply { if (!isLocal) setCustomCacheKey(Streaming.cacheKey(uri)) }
             .setMediaMetadata(meta)
             .build()
     }

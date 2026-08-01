@@ -115,6 +115,7 @@ fun MiniPlayer(vm: SonoraViewModel, onExpand: () -> Unit) {
     val position by vm.position.collectAsState()
     val duration by vm.duration.collectAsState()
     val artBrush by vm.artBrush.collectAsState()
+    val reconnecting by vm.reconnecting.collectAsState()
     val brand = artBrush ?: LocalBrandBrush.current
 
     val progress = if (duration > 0L) (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
@@ -169,12 +170,15 @@ fun MiniPlayer(vm: SonoraViewModel, onExpand: () -> Unit) {
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                    // Silence with no explanation is the worst possible failure while
+                    // driving — say out loud that we're fighting the connection.
                     Text(
-                        artist ?: "",
+                        if (reconnecting) "Reconnecting…" else (artist ?: ""),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (reconnecting) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 IconButton(onClick = { vm.togglePlay() }) {
@@ -241,6 +245,7 @@ fun NowPlayingScreen(
     }
 
     val artBrush by vm.artBrush.collectAsState()
+    val reconnecting by vm.reconnecting.collectAsState()
     val brand = artBrush ?: LocalBrandBrush.current
     val haptics = LocalHapticFeedback.current
     val uriHandler = LocalUriHandler.current
@@ -385,6 +390,17 @@ fun NowPlayingScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    // Never leave a dropout looking like the app simply stopped.
+                    if (reconnecting) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "Reconnecting… playback resumes on its own",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
                 // Live radio → favourite the STATION; a normal track → star the song.
                 if (isLive) {

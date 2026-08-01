@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import com.google.gson.Gson
+import com.sikamikaniko.sonora.playback.Streaming
 
 /** A minimal, restorable description of one queued item. */
 data class SavedTrack(
@@ -30,6 +31,12 @@ fun PlaybackSnapshot.toMediaItems(): List<MediaItem> = tracks.map { t ->
     MediaItem.Builder()
         .setMediaId(t.mediaId)
         .setUri(t.uri)
+        // The persisted URL carries the salt/token it was signed with, so it can never
+        // match a freshly built one — key the cache on the song instead, or a resumed
+        // queue re-downloads everything it already has on disk.
+        .apply {
+            if (t.uri.startsWith("http")) setCustomCacheKey(Streaming.cacheKey(t.uri))
+        }
         .setMediaMetadata(
             MediaMetadata.Builder()
                 .setTitle(t.title)
