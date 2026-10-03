@@ -220,12 +220,34 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                     androidx.compose.material3.DropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
                         when {
                             modelsLoading -> androidx.compose.material3.DropdownMenuItem(text = { Text("Loading models…") }, onClick = { })
-                            models.isEmpty() -> androidx.compose.material3.DropdownMenuItem(text = { Text("No models found — check the server URL is reachable") }, onClick = { modelMenu = false })
+                            models.isEmpty() -> androidx.compose.material3.DropdownMenuItem(text = { Text("No models found — tap Test connection to see why") }, onClick = { modelMenu = false })
                         }
                         models.forEach { m ->
                             androidx.compose.material3.DropdownMenuItem(text = { Text(m) }, onClick = { vm.setAiModel(m); modelMenu = false })
                         }
                     }
+                }
+                Spacer(Modifier.height(10.dp))
+                val aiTest by vm.aiTest.collectAsState()
+                val aiTesting by vm.aiTesting.collectAsState()
+                androidx.compose.material3.FilledTonalButton(
+                    onClick = { vm.testAi() },
+                    enabled = !aiTesting && aiBaseUrl.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (aiTesting) {
+                        androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.size(8.dp))
+                    }
+                    Text(if (aiTesting) "Testing…" else "Test connection")
+                }
+                aiTest?.let { r ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        r.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (r.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
                 var langMenu by remember { mutableStateOf(false) }

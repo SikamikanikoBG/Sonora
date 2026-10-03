@@ -329,8 +329,14 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     val aiModelsLoading: StateFlow<Boolean> = _aiModelsLoading.asStateFlow()
 
     /** Shown in the AI panels when the model/server can't be reached, so a failure is never silent. */
-    private val aiUnreachable =
-        "⚠️ Couldn't reach your AI. Check the AI server URL and model in Settings — and your connection."
+    private val aiUnreachable: String
+        get() = "⚠️ Couldn't reach your AI" + (AiClient.lastError?.let { " ($it)" } ?: "") +
+            ". Use Settings → AI → Test connection to see what's wrong."
+
+    private val _aiTest = MutableStateFlow<AiClient.TestResult?>(null)
+    val aiTest: StateFlow<AiClient.TestResult?> = _aiTest.asStateFlow()
+    private val _aiTesting = MutableStateFlow(false)
+    val aiTesting: StateFlow<Boolean> = _aiTesting.asStateFlow()
 
     // All AI answer surfaces (About / Ask / Lyrics tools) share _aiText, so only ONE stream may
     // write at a time. Track it so starting a new one CANCELS the old (no cross-screen bleed),
@@ -412,13 +418,16 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     fun setAiProvider(v: AiClient.Provider) {
         if (v == _aiProvider.value) return
         prefs.aiProvider = v.name; _aiProvider.value = v; AiClient.provider = v
-        // Model names don't carry across servers (e.g. "qwen3:8b" vs "Qwen/Qwen3-8B").
+        // Model names don't carry across servers (e.g. "qwen3:8b" vs "qwen3.8-27b") — a stale
+        // one made every vLLM call 404 while Settings still showed it as selected.
         _aiModels.value = emptyList()
+        prefs.aiModel = ""; _aiModel.value = ""
+        _aiTest.value = null
     }
-    fun setAiApiKey(v: String) { prefs.aiApiKey = v; _aiApiKey.value = v; AiClient.apiKey = v }
-    fun setAiBaseUrl(v: String) { prefs.aiBaseUrl = v; _aiBaseUrl.value = v }
+    fun setAiApiKey(v: String) { prefs.aiApiKey = v; _aiApiKey.value = v; AiClient.apiKey = v; _aiTest.value = null }
+    fun setAiBaseUrl(v: String) { prefs.aiBaseUrl = v; _aiBaseUrl.value = v; _aiTest.value = null }
     fun setAiModel(v: String) {
-        prefs.aiModel = v; _aiModel.value = v
+        prefs.aiModel = v; _aiModel.value = v; _aiTest.value = null
         // Choosing a model implies wanting AI on — avoids the "enabled?" trap.
         if (v.isNotBlank() && !_aiEnabled.value) { prefs.aiEnabled = true; _aiEnabled.value = true }
     }
@@ -428,8 +437,39 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         _aiModelsLoading.value = true
         try {
             _aiModels.value = AiClient.listModels(_aiBaseUrl.value)
+            adoptOnlyModel(_aiModels.value)
         } finally {
             _aiModelsLoading.value = false
+        }
+    }
+
+    /** A server serving exactly one model (typical for vLLM) needs no picking — and it fixes a stale name. */
+    private fun adoptOnlyModel(models: List<String>): Boolean {
+        val only = models.singleOrNull() ?: return false
+        if (_aiModel.value == only) return false
+        setAiModel(only)
+        return true
+    }
+
+    /** Settings → AI → Test connection. */
+    fun testAi() = viewModelScope.launch {
+        if (_aiTesting.value) return@launch
+        _aiTesting.value = true
+        _aiTest.value = null
+        try {
+            var r = AiClient.testConnection(_aiBaseUrl.value, _aiModel.value)
+            if (r.models.isNotEmpty()) _aiModels.value = r.models
+            if (!r.modelFound && adoptOnlyModel(r.models)) r = AiClient.testConnection(_aiBaseUrl.value, _aiModel.value)
+            _aiTest.value = r
+        } finally {
+            _aiTesting.value = false
+        }
+    }
+
+    init {
+        // Heal configs saved by v1.14.0, where switching to vLLM kept the old Ollama model name.
+        if (_aiProvider.value == AiClient.Provider.VLLM && _aiBaseUrl.value.isNotBlank()) {
+            viewModelScope.launch { adoptOnlyModel(AiClient.listModels(_aiBaseUrl.value)) }
         }
     }
     fun clearAiText() { stopAiStream(); _aiText.value = "" }
@@ -684,7 +724,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
             } else gathered.shuffled().take(60)
             if (songs.isEmpty()) { _aiStatus.value = "No playable tracks found"; return@launch }
             _mixSongs.value = songs
-            _aiStatus.value = "Playing ${songs.size} tracks · ${albums.size} albums"
+            _aiStatus.value = if (djQuery.isEmpty && AiClient.lastError != null)
+                // The AI failed and djSelect fell back — say so instead of passing it off as a pick.
+                "⚠️ AI unreachable (${AiClient.lastError}) — playing ${songs.size} tracks from a fallback pick"
+            else "Playing ${songs.size} tracks · ${albums.size} albums"
             _lastDjPrompt.value = prompt
             playSongs(songs, 0)
         } catch (e: Exception) {
