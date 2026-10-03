@@ -126,7 +126,7 @@ fun AskScreen(vm: SonoraViewModel, nav: NavController) {
                 Text("Connect your AI first", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Add your Ollama server and pick a model in Settings → AI.",
+                    "Add your Ollama or vLLM server and pick a model in Settings → AI.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

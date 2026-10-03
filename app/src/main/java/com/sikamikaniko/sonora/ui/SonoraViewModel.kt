@@ -313,6 +313,10 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
     private fun styleHint() = styleHints.random()
     private val _aiEnabled = MutableStateFlow(prefs.aiEnabled)
     val aiEnabled: StateFlow<Boolean> = _aiEnabled.asStateFlow()
+    private val _aiProvider = MutableStateFlow(AiClient.Provider.of(prefs.aiProvider).also { AiClient.provider = it })
+    val aiProvider: StateFlow<AiClient.Provider> = _aiProvider.asStateFlow()
+    private val _aiApiKey = MutableStateFlow(prefs.aiApiKey.also { AiClient.apiKey = it })
+    val aiApiKey: StateFlow<String> = _aiApiKey.asStateFlow()
     private val _aiBaseUrl = MutableStateFlow(prefs.aiBaseUrl)
     val aiBaseUrl: StateFlow<String> = _aiBaseUrl.asStateFlow()
     private val _aiModel = MutableStateFlow(prefs.aiModel)
@@ -326,7 +330,7 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Shown in the AI panels when the model/server can't be reached, so a failure is never silent. */
     private val aiUnreachable =
-        "⚠️ Couldn't reach your AI. Check the Ollama server URL and model in Settings — and your connection."
+        "⚠️ Couldn't reach your AI. Check the AI server URL and model in Settings — and your connection."
 
     // All AI answer surfaces (About / Ask / Lyrics tools) share _aiText, so only ONE stream may
     // write at a time. Track it so starting a new one CANCELS the old (no cross-screen bleed),
@@ -405,6 +409,13 @@ class SonoraViewModel(app: Application) : AndroidViewModel(app) {
         get() = _aiEnabled.value && _aiBaseUrl.value.isNotBlank() && _aiModel.value.isNotBlank()
 
     fun setAiEnabled(v: Boolean) { prefs.aiEnabled = v; _aiEnabled.value = v }
+    fun setAiProvider(v: AiClient.Provider) {
+        if (v == _aiProvider.value) return
+        prefs.aiProvider = v.name; _aiProvider.value = v; AiClient.provider = v
+        // Model names don't carry across servers (e.g. "qwen3:8b" vs "Qwen/Qwen3-8B").
+        _aiModels.value = emptyList()
+    }
+    fun setAiApiKey(v: String) { prefs.aiApiKey = v; _aiApiKey.value = v; AiClient.apiKey = v }
     fun setAiBaseUrl(v: String) { prefs.aiBaseUrl = v; _aiBaseUrl.value = v }
     fun setAiModel(v: String) {
         prefs.aiModel = v; _aiModel.value = v

@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.sikamikaniko.sonora.BuildConfig
+import com.sikamikaniko.sonora.data.AiClient
 
 /** Targets for bilingual lyric translation — the everyday picks first, the rest A→Z. */
 private val TRANSLATE_LANGUAGES = listOf(
@@ -151,6 +152,8 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
             // ---- AI ----
             SectionCard(title = "AI", icon = Icons.Filled.AutoAwesome) {
                 val aiEnabled by vm.aiEnabled.collectAsState()
+                val aiProvider by vm.aiProvider.collectAsState()
+                val aiApiKey by vm.aiApiKey.collectAsState()
                 val aiBaseUrl by vm.aiBaseUrl.collectAsState()
                 val aiModel by vm.aiModel.collectAsState()
                 val aiLang by vm.aiLang.collectAsState()
@@ -166,14 +169,36 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                     androidx.compose.material3.Switch(checked = aiEnabled, onCheckedChange = { vm.setAiEnabled(it) })
                 }
                 Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    AiClient.Provider.values().forEach { p ->
+                        androidx.compose.material3.FilterChip(
+                            selected = aiProvider == p,
+                            onClick = { vm.setAiProvider(p) },
+                            label = { Text(p.label) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
                 androidx.compose.material3.OutlinedTextField(
                     value = aiBaseUrl,
                     onValueChange = { vm.setAiBaseUrl(it) },
-                    label = { Text("Ollama server URL") },
-                    placeholder = { Text("http://your-server:11434") },
+                    label = { Text("${aiProvider.label} server URL") },
+                    placeholder = { Text(aiProvider.urlHint) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (aiProvider == AiClient.Provider.VLLM) {
+                    Spacer(Modifier.height(10.dp))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = aiApiKey,
+                        onValueChange = { vm.setAiApiKey(it) },
+                        label = { Text("API key (optional)") },
+                        placeholder = { Text("Only if vLLM runs with --api-key") },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
                 Box {
                     OutlinedButton(
@@ -224,7 +249,7 @@ fun SettingsScreen(vm: SonoraViewModel, nav: NavController) {
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Runs on your own Ollama server — private, nothing sent to the cloud.",
+                    "Runs on your own Ollama or vLLM server — private, nothing sent to the cloud.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

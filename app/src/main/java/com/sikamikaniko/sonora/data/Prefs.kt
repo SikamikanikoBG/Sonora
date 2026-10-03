@@ -36,7 +36,17 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("aiEnabled", false)
         set(v) = sp.edit().putBoolean("aiEnabled", v).apply()
 
-    /** Ollama-compatible base URL, e.g. http://your-server:11434 */
+    /** Which API the AI server speaks — AiClient.Provider.name ("OLLAMA" or "VLLM"). */
+    var aiProvider: String
+        get() = sp.getString("aiProvider", "OLLAMA") ?: "OLLAMA"
+        set(v) = sp.edit().putString("aiProvider", v).apply()
+
+    /** Optional bearer token for a vLLM server started with --api-key. */
+    var aiApiKey: String
+        get() = sp.getString("aiApiKey", "") ?: ""
+        set(v) = sp.edit().putString("aiApiKey", v).apply()
+
+    /** AI server base URL, e.g. http://your-server:11434 (Ollama) or http://your-server:8000 (vLLM) */
     var aiBaseUrl: String
         get() = sp.getString("aiBaseUrl", "") ?: ""
         set(v) = sp.edit().putString("aiBaseUrl", v).apply()
